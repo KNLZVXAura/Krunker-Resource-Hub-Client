@@ -38,6 +38,10 @@ if [ -n "$KRH_REQUIRE_SIGNED" ]; then
     fi
 fi
 
+# A mounted volume with the same name would push dmgbuild's scratch mount to
+# "/Volumes/<name> 1", and the background alias records that mount point.
+[ ! -e "/Volumes/$APPNAME" ] || { echo "[dist-mac] ERROR: eject or remove /Volumes/$APPNAME before building"; exit 1; }
+
 echo "[dist-mac] building renderer/main bundles..."
 npm run build
 
@@ -55,41 +59,49 @@ else
     codesign --verify --deep "$OUTAPP" && echo "[dist-mac] ad-hoc signature valid"
 fi
 
-echo "[dist-mac] building DMG via hdiutil..."
-STAGE="$(mktemp -d)"
-ditto "$OUTAPP" "$STAGE/$APPNAME.app"
-ln -s /Applications "$STAGE/Applications"
-# Give the mounted volume the app icon instead of the generic disk-image icon.
-# Finder uses a .VolumeIcon.icns at the volume root, but only when the root also
-# carries the "custom icon" attribute — and hdiutil create -srcfolder drops that
-# attribute. So build a read-write image, set the bit on the live volume, then
-# convert to a compressed read-only image (the conversion preserves the bit).
-cp build/icon.icns "$STAGE/.VolumeIcon.icns"
-SETFILE="$(xcrun -f SetFile 2>/dev/null || true)"
-RWDIR="$(mktemp -d)"; RW="$RWDIR/rw.dmg"
+echo "[dist-mac] building DMG via dmgbuild..."
+# dmgbuild lays out the window (background, icon positions, no toolbar) and sets
+# the volume icon by writing .DS_Store directly — no Finder/AppleScript, so it
+# works on headless CI runners. Layout lives in build/dmg-settings.py; it runs
+# through build/dmgbuild-alias-only.py, which leaves out the background bookmark
+# macOS 26 Finder can't resolve. The venv under out/ (git-ignored) is rebuilt
+# whenever the pins change.
+VENV="out/.dmgbuild-venv"
+DMGBUILD_PINS="dmgbuild==1.6.5 ds-store==1.3.1 mac-alias==2.2.2"
+if [ "$(cat "$VENV/.pins" 2>/dev/null)" != "$DMGBUILD_PINS" ] || ! "$VENV/bin/python" -c "import dmgbuild" 2>/dev/null; then
+    echo "[dist-mac] installing dmgbuild into $VENV..."
+    rm -rf "$VENV"
+    python3 -m venv "$VENV"
+    # shellcheck disable=SC2086 # word-split the pin list into pip arguments
+    "$VENV/bin/pip" install -q --disable-pip-version-check $DMGBUILD_PINS
+    echo "$DMGBUILD_PINS" > "$VENV/.pins"
+fi
 rm -f "$DMG"
 # hdiutil create intermittently fails with "Resource busy" on GitHub macOS
 # runners (why electron-builder's dmg-builder retries it) — retry up to 3x.
 ok=""
 for attempt in 1 2 3; do
-    if hdiutil create -volname "$APPNAME" -srcfolder "$STAGE" -ov -format UDRW -fs HFS+ "$RW" >/dev/null; then
+    if "$VENV/bin/python" build/dmgbuild-alias-only.py -s build/dmg-settings.py -D app="$OUTAPP" "$APPNAME" "$DMG"; then
         ok=1
         break
     fi
-    echo "[dist-mac] hdiutil create failed (attempt $attempt/3), retrying in 5s..."
+    echo "[dist-mac] dmgbuild failed (attempt $attempt/3), retrying in 5s..."
+    rm -f "$DMG"
     sleep 5
 done
-[ -n "$ok" ] || { echo "[dist-mac] hdiutil create failed after 3 attempts"; rm -rf "$STAGE" "$RWDIR"; exit 1; }
-rm -rf "$STAGE"
-if [ -n "$SETFILE" ]; then
-    MP="$(hdiutil attach "$RW" -nobrowse -readwrite | grep -o '/Volumes/.*$' | head -1)"
-    "$SETFILE" -a C "$MP"
-    hdiutil detach "$MP" >/dev/null 2>&1 || hdiutil detach "$MP" -force >/dev/null 2>&1
-else
-    echo "[dist-mac] WARNING: SetFile unavailable — mounted DMG keeps the generic volume icon"
+[ -n "$ok" ] || { echo "[dist-mac] dmgbuild failed after 3 attempts"; exit 1; }
+# Check the finished image: the Finder layout is complete (build/dmg-verify.py)
+# and the app users copy still has a valid signature (e.g. a Finder-info xattr
+# on the bundle breaks --strict).
+MP="$(hdiutil attach "$DMG" -nobrowse -readonly -noautoopen | grep -o '/Volumes/.*$' | head -1)"
+[ -n "$MP" ] || { echo "[dist-mac] ERROR: could not mount $DMG to check it"; exit 1; }
+if ! "$VENV/bin/python" build/dmg-verify.py "$MP" "$APPNAME.app" || ! codesign --verify --deep --strict "$MP/$APPNAME.app"; then
+    hdiutil detach "$MP" -force >/dev/null 2>&1 || true
+    echo "[dist-mac] ERROR: DMG check failed"
+    exit 1
 fi
-hdiutil convert "$RW" -format UDZO -o "$DMG" >/dev/null
-rm -rf "$RWDIR"
+hdiutil detach "$MP" >/dev/null 2>&1 || hdiutil detach "$MP" -force >/dev/null
+echo "[dist-mac] DMG layout and app signature valid"
 
 # Portable build: the signed .app in a zip. Unzip anywhere (Desktop, USB stick, ...) and run it,
 # no installation needed. ditto keeps the symlinks / permissions / signature a plain zip would lose.

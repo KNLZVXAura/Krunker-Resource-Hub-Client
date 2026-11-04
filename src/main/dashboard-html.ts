@@ -190,6 +190,7 @@ const BODY = `
   <div class="more">More</div>
   <button data-p="themes">Themes</button>
   <button data-p="news">Krunker news</button>
+  <button data-p="live">Live Data</button>
   <button data-p="servers">Servers</button>
   <button data-p="history">History</button>
   <button data-p="profiles">Profiles</button>
@@ -242,6 +243,15 @@ const BODY = `
    <div class="card"><h2>Swapper folder</h2><p>Put files here using the same paths as Krunker's own assets (for example sound/ambient_1.mp3). The game rescans it on every refresh.</p>
     <div class="row"><button class="btn" id="wFolder">Open swapper folder</button></div><p id="wPath" style="margin:10px 0 0"></p></div>
    <div class="card"><h2>Turn the swapper on or off</h2><p>It is in Settings &gt; Swapper.</p><button class="btn ghost" data-go="settings">Open settings</button></div>
+  </section>
+  <section id="p-live" hidden>
+   <h1>Live Data</h1><p class="sub">Look up players, clans, Turf Wars, leaderboards and the item market without leaving the client. Data comes straight from Krunker's public game API (documented by the krapio project) and is cached for a minute.</p>
+   <div class="card"><div class="row" id="lvTabs"><button class="btn" data-lt="player">Player</button><button class="btn ghost" data-lt="clan">Clan</button><button class="btn ghost" data-lt="turf">Turf Wars</button><button class="btn ghost" data-lt="board">Leaderboards</button><button class="btn ghost" data-lt="market">Market</button></div></div>
+   <div class="card" id="lv-player"><div class="row"><input type="text" id="lvPName" placeholder="Player name" maxlength="32" autocomplete="off" spellcheck="false"><button class="btn" id="lvPGo">Look up</button></div><div id="lvPOut" style="margin-top:12px"></div></div>
+   <div class="card" id="lv-clan" hidden><div class="row"><input type="text" id="lvCName" placeholder="Clan name" maxlength="32" autocomplete="off" spellcheck="false"><button class="btn" id="lvCGo">Look up</button></div><div id="lvCOut" style="margin-top:12px"></div></div>
+   <div class="card" id="lv-turf" hidden><div class="row"><button class="btn" id="lvTGo">Refresh</button></div><div id="lvTOut" style="margin-top:12px"></div></div>
+   <div class="card" id="lv-board" hidden><div class="row"><select id="lvBType"><option value="player_score">Players: score</option><option value="player_kills">Players: kills</option><option value="player_wins">Players: wins</option><option value="player_nukes">Players: nukes</option><option value="player_timeplayed">Players: time played</option><option value="player_funds">Players: kr</option><option value="player_skinvalue">Players: skin value</option><option value="player_followed">Players: followers</option><option value="player_ranked_matches">Players: ranked matches</option><option value="clans_score">Clans: score</option><option value="clans_members">Clans: members</option></select><button class="btn" id="lvBGo">Show top 100</button></div><div id="lvBOut" style="margin-top:12px"></div></div>
+   <div class="card" id="lv-market" hidden><p>Search the item market by name. Skins are listed by their index number (the game does not give names to this API); click a row for the price analysis of the last 30 days.</p><div class="row" style="margin-top:8px"><input type="text" id="lvMTerm" placeholder="Search term, for example Katana (leave empty for everything)" maxlength="40" autocomplete="off" spellcheck="false"><button class="btn" id="lvMGo">Search</button></div><div id="lvMOut" style="margin-top:12px"></div><div id="lvMDetail" style="margin-top:12px"></div></div>
   </section>
   <section id="p-servers" hidden>
    <h1>Servers</h1><p class="sub">Your ping to every Krunker region. Star the ones you want and let the matchmaker use only those.</p>
@@ -454,6 +464,103 @@ $('gJoinGo').onclick = joinByLink;
 $('gClear').onclick = async () => { await call('games-clear'); loadGames(); };
 $('gJoinUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); joinByLink(); } });
 $('gSave').onclick = async () => { const r = await call('game-fav-add', $('gName').value); if (r.error) toast(r.error); else { $('gName').value = ''; toast('Saved'); } loadGames(); };
+
+
+// ── Live Data (Krunker public game API) ──
+const live = async (kind, arg) => { const r = await call('live', kind, arg || {}); if (!r || !r.ok) throw new Error((r && r.error) || 'Request failed'); return r.data; };
+const nf = (n) => (typeof n === 'number' ? n.toLocaleString() : String(n == null ? '-' : n));
+const lvBusy = (box) => { box.replaceChildren(el('p', '', 'Loading...')); };
+const lvFail = (box, e) => { box.replaceChildren(el('p', 'ping-bad', e && e.message ? e.message : 'Something went wrong')); };
+const lvTable = (box, heads, rows, onRow) => {
+  const t = document.createElement('table'); const hr = document.createElement('tr'); heads.forEach((h) => hr.append(el('th', '', h)));
+  const th = document.createElement('thead'); th.append(hr); const tb = document.createElement('tbody');
+  rows.forEach((cells, i) => { const tr = document.createElement('tr'); cells.forEach((c) => tr.append(el('td', '', String(c)))); if (onRow) { tr.style.cursor = 'pointer'; tr.onclick = () => onRow(i); } tb.append(tr); });
+  t.append(th, tb); box.replaceChildren(t);
+};
+const lvTabs = ['player', 'clan', 'turf', 'board', 'market'];
+document.querySelectorAll('#lvTabs button').forEach((b) => { b.onclick = () => {
+  lvTabs.forEach((t) => { $('lv-' + t).hidden = t !== b.dataset.lt; });
+  document.querySelectorAll('#lvTabs button').forEach((x) => x.classList.toggle('ghost', x !== b));
+  if (b.dataset.lt === 'turf') $('lvTGo').click();
+}; });
+const kdr = (k, d) => (d ? (k / d).toFixed(2) : String(k));
+const hoursOf = (s) => (s / 3600).toFixed(1) + ' h';
+
+async function lvPlayer(nm) {
+  const box = $('lvPOut'); lvBusy(box);
+  try {
+    const p = await live('player', { name: nm }); const st = p.player_stats || {};
+    const rows = [['Name', p.player_name + (p.player_clan ? ' [' + p.player_clan + ']' : '')], ['Score', nf(p.player_score)], ['Kills / Deaths', nf(p.player_kills) + ' / ' + nf(p.player_deaths) + '  (K/D ' + kdr(p.player_kills, p.player_deaths) + ')'], ['Wins / Games', nf(p.player_wins) + ' / ' + nf(p.player_games_played)], ['Time played', hoursOf(p.player_timeplayed || 0)], ['Nukes', nf(st.n)], ['Headshots / Wallbangs', nf(st.hs) + ' / ' + nf(st.wb)], ['Accuracy', st.s ? (100 * st.h / st.s).toFixed(1) + ' %' : '-'], ['Melee / Thrown kills', nf(st.mk) + ' / ' + nf(st.tmk)], ['Assists', nf(st.ast)], ['KR', nf(p.player_funds)], ['Skin value', nf(p.player_skinvalue)], ['Followers / Following', nf(p.player_followed) + ' / ' + nf(p.player_following)], ['Joined', p.player_datenew || '-']];
+    lvTable(box, ['Stat', 'Value'], rows);
+  } catch (e) {
+    if (e.message !== 'Not found') return lvFail(box, e);
+    try { const list = await live('player-search', { name: nm }); if (!list.results || !list.results.length) return lvFail(box, new Error('No player found')); lvTable(box, ['Did you mean', 'Score'], list.results.map((r) => [r.player_name, nf(r.player_score)]), (i) => { $('lvPName').value = list.results[i].player_name; lvPlayer(list.results[i].player_name); }); } catch (e2) { lvFail(box, e2); }
+  }
+}
+$('lvPGo').onclick = () => { const v = $('lvPName').value.trim(); if (v) lvPlayer(v); };
+$('lvPName').onkeydown = (e) => { if (e.key === 'Enter') $('lvPGo').click(); };
+
+async function lvClan(nm) {
+  const box = $('lvCOut'); lvBusy(box);
+  try {
+    const c = await live('clan', { name: nm }); const m = (c.members || []).slice().sort((a, b) => b.s - a.s); const roles = ['Recruit', 'Soldier', 'Captain', 'Commander'];
+    const head = el('p', '', c.clan_name + '  |  rank #' + nf(c.clan_rank) + '  |  score ' + nf(c.clan_score) + '  |  ' + m.length + ' members  |  leader ' + c.creator_name);
+    const holder = document.createElement('div'); lvTable(holder, ['#', 'Member', 'Role', 'Score', 'Last 7 days'], m.map((x, i) => [i + 1, x.p, roles[x.r] || '-', nf(x.s), nf(x.s7)]));
+    box.replaceChildren(head, holder);
+  } catch (e) { lvFail(box, e); }
+}
+$('lvCGo').onclick = () => { const v = $('lvCName').value.trim(); if (v) lvClan(v); };
+$('lvCName').onkeydown = (e) => { if (e.key === 'Enter') $('lvCGo').click(); };
+
+$('lvTGo').onclick = async () => {
+  const box = $('lvTOut'); lvBusy(box);
+  try {
+    const st = await live('turf-status'); const list = Array.isArray(st) ? st : [st]; box.replaceChildren();
+    list.forEach((m) => { const h = el('h2', '', m.map_name + ' - held by ' + (m.clan_name || 'nobody')); const meta = el('p', '', 'Kills today: ' + nf(m.total_kills_today) + '  |  guaranteed reward ' + nf(m.guaranteed_reward) + '  |  estimated ' + nf(m.estimated_reward));
+      const t = document.createElement('div'); lvTable(t, ['#', 'Clan', 'Kills', 'Deaths'], (m.leaderboard || []).map((r) => [r.position, r.clan_name, nf(r.kills), nf(r.deaths)])); t.style.marginBottom = '14px'; box.append(h, meta, t); });
+  } catch (e) { lvFail(box, e); }
+};
+
+$('lvBGo').onclick = async () => {
+  const box = $('lvBOut'); lvBusy(box); const v = $('lvBType').value;
+  try {
+    if (v.startsWith('clans_')) { const rows = await live('board-clans', { sort: v.slice(6) }); lvTable(box, ['#', 'Clan', 'Score', 'Members'], rows.map((r) => [r.position, r.clan_name, nf(r.clan_score), nf(r.member_count)]), (i) => { show('live'); document.querySelector('#lvTabs [data-lt=clan]').click(); $('lvCName').value = rows[i].clan_name; lvClan(rows[i].clan_name); }); }
+    else { const rows = await live('board-players', { type: v }); const time = v === 'player_timeplayed'; lvTable(box, ['#', 'Player', 'Clan', 'Value'], rows.map((r) => [r.position, r.player_name, r.player_clan || '', time ? hoursOf(r.value) : nf(r.value)]), (i) => { document.querySelector('#lvTabs [data-lt=player]').click(); $('lvPName').value = rows[i].player_name; lvPlayer(rows[i].player_name); }); }
+  } catch (e) { lvFail(box, e); }
+};
+
+function lvAnalyse(skin, info, sales) {
+  const box = $('lvMDetail'); box.replaceChildren();
+  const rows = (sales || []).slice().sort((a, b) => (a.d < b.d ? -1 : 1));
+  const avg = (list) => { const kr = list.reduce((s, r) => s + r.f, 0); const n = list.reduce((s, r) => s + r.t, 0); return n ? kr / n : 0; };
+  const recent = rows.slice(-7); const a7 = avg(recent); const a30 = avg(rows); const sold30 = rows.reduce((s, r) => s + r.t, 0);
+  const lines = ['Skin #' + skin, 'Lowest ask: ' + (info.low ? nf(info.low) + ' kr' : 'nothing listed') + '  |  highest ask: ' + (info.high ? nf(info.high) + ' kr' : '-') + '  |  in circulation: ' + nf(info.inC)];
+  if (rows.length) {
+    lines.push('Average sale price: last 7 sale days ' + nf(Math.round(a7)) + ' kr, last 30 days ' + nf(Math.round(a30)) + ' kr  |  ' + nf(sold30) + ' sold in 30 days');
+    if (a30) { const tr = (a7 - a30) / a30 * 100; lines.push('Trend: ' + (tr >= 0 ? '+' : '') + tr.toFixed(1) + ' % compared to the 30 day average (' + (Math.abs(tr) < 3 ? 'flat' : tr > 0 ? 'rising' : 'falling') + ')'); }
+    if (info.low && a7) { const d = (info.low - a7) / a7 * 100; lines.push('The lowest ask is ' + Math.abs(d).toFixed(1) + ' % ' + (d <= 0 ? 'below' : 'above') + ' the recent average sale price' + (d <= -10 ? ' - looks cheap.' : d >= 10 ? ' - looks overpriced.' : ' - looks fair.')); }
+    const max = Math.max.apply(null, rows.map((r) => (r.t ? r.f / r.t : 0)));
+    const bars = el('div', ''); bars.style.cssText = 'display:flex;align-items:flex-end;gap:3px;height:70px;margin:10px 0';
+    rows.forEach((r) => { const v = r.t ? r.f / r.t : 0; const b = document.createElement('div'); b.title = r.d + ': ' + nf(Math.round(v)) + ' kr x ' + r.t; b.style.cssText = 'flex:1;min-width:3px;border-radius:3px 3px 0 0;background:var(--acc);height:' + Math.max(3, max ? v / max * 100 : 3) + '%'; bars.append(b); });
+    box.append(bars);
+  } else lines.push('No sales in the last 30 days. Prices from so few trades are not reliable.');
+  lines.forEach((l) => box.append(el('p', '', l)));
+  box.append(el('p', '', 'Market data needs time to say anything useful. Do not treat it as financial advice.'));
+}
+
+async function lvMarket() {
+  const box = $('lvMOut'); lvBusy(box); $('lvMDetail').replaceChildren();
+  try {
+    const r = await live('market-stats', { term: $('lvMTerm').value }); const st = r.stats || [];
+    if (!st.length) return box.replaceChildren(el('p', '', 'Nothing found'));
+    lvTable(box, ['Skin', 'Lowest ask', 'Highest ask', 'In circulation', 'On sale'], st.map((x) => ['#' + x.ski, x.low ? nf(x.low) : '-', x.high ? nf(x.high) : '-', nf(x.inC), nf(x.onS)]), async (i) => {
+      const d = $('lvMDetail'); lvBusy(d);
+      try { const [info, sales] = await Promise.all([live('market-info', { id: st[i].ski }), live('market-sales', { id: st[i].ski })]); lvAnalyse(st[i].ski, info, sales); } catch (e) { lvFail(d, e); }
+    });
+  } catch (e) { lvFail(box, e); }
+}
+$('lvMGo').onclick = lvMarket;
+$('lvMTerm').onkeydown = (e) => { if (e.key === 'Enter') lvMarket(); };
 
 async function loadServers(force) {
   $('svBody').replaceChildren(); $('svNote').textContent = force ? 'Measuring...' : 'Loading...';

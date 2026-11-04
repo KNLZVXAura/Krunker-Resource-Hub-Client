@@ -15,10 +15,10 @@ KRH Client is the official client of the [Krunker Resource Hub](https://krunker-
 
 | File | For |
 | --- | --- |
-| `KRH-Client-2.2.0-Windows-Setup.exe` | Windows 64-bit, installer |
-| `KRH-Client-2.2.0-Windows-Portable.exe` | Windows 64-bit, no installation |
-| `KRH-Client-2.2.0-Linux-Installer.deb` | Debian, Ubuntu, Mint |
-| `KRH-Client-2.2.0-Linux-Portable.AppImage` | Linux, run `chmod +x` first |
+| `KRH-Client-3.0.0-Windows-Setup.exe` | Windows 64-bit, installer |
+| `KRH-Client-3.0.0-Windows-Portable.exe` | Windows 64-bit, no installation |
+| `KRH-Client-3.0.0-Linux-Installer.deb` | Debian, Ubuntu, Mint |
+| `KRH-Client-3.0.0-Linux-Portable.AppImage` | Linux, run `chmod +x` first |
 
 The builds are not code-signed, so Windows SmartScreen may show an "Unknown publisher" warning on first launch. Check the SHA-256 checksums on the release page before running a download.
 
@@ -40,7 +40,9 @@ The builds are not code-signed, so Windows SmartScreen may show an "Unknown publ
 - **Performance doctor** (2.1.0): Diagnostics > Run check explains low FPS (Electron build, FPS and GPU settings, display scaling, busy processes) and copies a report
 - **Userscript guard** (2.1.0): a new or edited userscript that crashes or hangs the game is switched off automatically; Home shows what was turned off
 - **Krunker news** (2.1.0): updates and events from the KRH website on the dashboard
-- **Font** (2.1.0): dashboard font, color and size, 150 font families (2.1.3). The dashboard is English only since 2.2.0; the real-time chat translator is separate and stays
+- **Server List Filter** (3.0.0): hides the servers whose map name contains your words (default: infect, trade, trading, fun-parkour), in Settings > Server List. Based on j4k0xb's Krunker Serverlist Filter, but it reads the server list answer instead of replacing the game's fetch.
+- **Separate Game Loop** (3.0.0, experimental, off by default): Settings > Experiments. Runs the game's frame on a timer between screen frames and draws only once per screen frame, an idea by KNLZVX to get low input delay without uncapped FPS.
+- **Font** (2.1.0): dashboard font, color and size, 150 font families (2.1.3). The dashboard is English only since 3.0.0; the real-time chat translator is separate and stays
 - **Krunker Sandbox** (2.0.1) button next to Krunker Viewer (opens `krunker.io/?sandbox` in the game window)
 - **Light while you play** (2.0.1): the dashboard window is closed and the KRH website window unloads itself while a game runs, so nothing extra runs next to the game; both come back when you need them
 - **Brightness** (2.0.1): the dashboard now starts lighter, and Themes > Brightness has a Brightness slider, a Panel solidness slider and three one-click looks (Bright, Balanced, Dark). Your picture's own Darken slider is separate
@@ -119,12 +121,22 @@ The builds are not code-signed, so Windows SmartScreen may show an "Unknown publ
 - **Background updates**: the client starts at once, downloads a new version quietly and offers "Restart to update" in the KRH Hub (optionally installs when you close it)
 - **Instant replay**: keeps the last 10-120 seconds in memory and saves a clip on a key or at a kill streak
 - **Session stats**: kills, deaths, play time, matches and maps for the session and all time, kept on your computer, with a summary when you leave the game
-- **Overlay layout editor**: drag the nuke counter, Spotify card and Twitch chat where you want them
+- **Overlay layout editor**: drag the stat counters, Spotify card and Twitch chat where you want them
 - **Streamer mode**: hides your Discord presence, saved accounts and the Spotify card with one key
 - **Safe Mode**: after repeated crashes (or `--safe-mode`) the client offers to start without userscripts, swapper, themes and extras, or to reset the settings with a backup
 - **Better performance on NVIDIA systems**
   - Linux: PRIME render offload is enabled automatically on hybrid-graphics laptops when the NVIDIA driver is loaded
   - Windows: KRH Client is registered for the high-performance GPU on hybrid-graphics laptops
+
+### KRH's own
+
+- **Ctrl+S** opens Krunker Social and **Ctrl+E** opens the Krunker Editor (changeable in Settings > Hotkeys)
+
+### Features from Krunker Civilian Client 1.3.2 and Kute 1.3.0
+
+- **Stat Counters**, **Game Brightness**, **High-Performance GPU**, live **matchmaker** map and mode lists, an always-on **resource swapper** with a wrong-folder warning, instantly applied **CSS themes** and `community.krunker.io` links in a client tab (from [Krunker Civilian Client](https://github.com/bigjakk/krunker-civilian-client) 1.3.2)
+- **My Inventory** keeps its scroll place after a sale (from [Kute](https://github.com/NullDev/Kute) 1.3.0) and **Ranked Match Sound Volume**
+- **Live Data** dashboard page (players, clans, Turf Wars, leaderboards, item market), using Krunker's public game API as documented by [krapio](https://nulldev.github.io/krapio/)
 
 ### Features from WOK Client and Kute
 
@@ -138,7 +150,7 @@ All of these are off by default unless noted. They are in Settings > Extras.
 - **Keep Friend Chat Drafts** (from Kute, on by default): the unsent text of a friend chat message is put back when Krunker clears the box
 - **End Message Per Account** (from Kute): Krunker's Match End Message is remembered for each account, so an alt never sends your main account's message
 - **Secure DNS (fixed)**: all lookups of the client use DNS-over-HTTPS, Cloudflare (1.1.1.1) first and Google (8.8.8.8) if Cloudflare fails. It is not a setting and there is no fallback to the DNS of your system or provider, so if both are blocked on your network the client cannot connect
-- **Example userscripts** (from Kute): Class Roulette and Quick Sell by Rarity, installed with one button in Settings > Userscripts. They start switched off and are never copied over an existing file
+- **Example userscripts**: Class Roulette and Quick Sell by Rarity (from Kute), Krunker Reconnector (Swat) and Quick Krunker Docs Integration (KNLZVX), installed with one button in Settings > Userscripts. Userscripts written for Tampermonkey now work as they are: `unsafeWindow`, `GM_setClipboard`, `@match` / `@exclude` and `@require` of the bundled msgpack library are supported. They start switched off and are never copied over an existing file
 
 ### Inherited from KCC
 
@@ -239,7 +251,7 @@ Notes:
 
 ## Userscripts
 
-Settings > Userscripts has an **Install** button for two example scripts (Class Roulette and Quick Sell by Rarity, both from Kute).
+Settings > Userscripts has an **Install** button for four example scripts (Class Roulette and Quick Sell by Rarity from Kute, Krunker Reconnector by Swat, Quick Krunker Docs Integration by KNLZVX).
 
 Any `.js` file in the scripts folder is loaded as a userscript if userscripts are enabled in the settings. Scripts support Tampermonkey-style metadata blocks (`@name`, `@author`, `@version`, `@desc`) and can define custom settings (boolean, number, select, color, keybind).
 
@@ -278,7 +290,8 @@ Found a bug or have an idea? [Open an issue](https://github.com/krunkerresourceh
 - [LaF Client](https://github.com/LaFClient/LaF) by Hiro527 and sh (MIT license): the idea of the `!link` command and the system info button (both written from scratch for KRH Client), and the five built-in CSS themes, made by NamekujiLSDs, which are included unmodified with their original headers. The MIT license text is in [`assets/laf-themes/LICENSE-LaF.txt`](assets/laf-themes/LICENSE-LaF.txt)
 - [WOK Client](https://github.com/Alx8g/wok-client) by Alx8g (GPL-3.0): the motion blur (code adapted for KRH Client) and the quick class picker (idea and styling)
 - [NM/NZ Client](https://github.com/nmallik1029/nm-nez-client) by nmallik1029 (GPL-3.0-or-later): updating without the installer, fast Escape, live accuracy, the frame-time HUD, sensitivity and FOV presets and friend / clan name colours (code adapted for KRH Client), plus Linux launcher and blocklist improvements
-- [Kute](https://github.com/NullDev/Kute) by NullDev (GPL-3.0): the classic menu styling, friend chat drafts and per-account end message (adapted for KRH Client), the ranked match alert and video skin blocking (ideas, written for KRH Client), and the Class Roulette and Quick Sell by Rarity example userscripts (included unmodified, MIT headers kept). No Kute website or API is used
+- [krapio](https://github.com/NullDev/krapio) by NullDev (MIT): the documentation of Krunker's public game API, which the Live Data page uses (endpoint paths and fields only, no code copied)
+- [Kute](https://github.com/NullDev/Kute) by NullDev (GPL-3.0): the classic menu styling, friend chat drafts and per-account end message (adapted for KRH Client), the ranked match alert, video skin blocking and ranked match sound volume (ideas, written for KRH Client), the My Inventory scroll fix (ported), the motion blur saturation fix (idea), and the Class Roulette and Quick Sell by Rarity example userscripts (included unmodified, MIT headers kept). No Kute website or API is used (the Live Data page reads Krunker's own public game API, documented by krapio)
 - [Crankshaft](https://github.com/KraXen72/crankshaft) by KraXen72: matchmaker and keystrokes overlay
 - [Glorp](https://github.com/slavcp/glorp) by slav: external ranked queue, plus several features reworked for KRH Client (CPU throttling, cleaner menu, selectable chat, custom blocklist and flags)
 - [Lombre_Blanche - Krunker Scripts](https://lombreblanche34.github.io/krunker_scripts/): author of the ranked leaderboard userscript that the leaderboard search feature is based on

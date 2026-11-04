@@ -30,6 +30,9 @@ const PRESETS: Record<string, { label: string; css: string }> = {
   'laf-kartoon': { label: 'LaF: Kartoon (2021)', css: lafType5 },
 };
 
+// .css, and .css.txt for files a browser or chat app renamed on download
+const THEME_FILE_RE = /\.css(\.txt)?$/i;
+
 export const GAME_THEMES_DIR = 'themes';
 export const SOCIAL_THEMES_DIR = 'socialthemes';
 
@@ -39,11 +42,18 @@ export function listThemes(swapDir: string, subdir: string = GAME_THEMES_DIR): T
         for (const [id, p] of Object.entries(PRESETS)) entries.push({ id: PRESET_PREFIX + id, label: p.label });
     }
     const themesDir = join(swapDir, subdir);
+    const add = (rel: string) => entries.push({ id: `user:${rel}`, label: rel.replace(THEME_FILE_RE, '') });
     try {
-        const files = readdirSync(themesDir);
-        for (const file of files) {
-            if (extname(file).toLowerCase() === '.css') {
-                entries.push({ id: `user:${file}`, label: basename(file, '.css') });
+        for (const dirent of readdirSync(themesDir, { withFileTypes: true })) {
+            if (dirent.isFile() && THEME_FILE_RE.test(dirent.name)) {
+                add(dirent.name);
+            } else if (dirent.isDirectory()) {
+                // One level deep, for themes shipped as a folder (e.g. an extracted zip)
+                try {
+                    for (const file of readdirSync(join(themesDir, dirent.name))) {
+                        if (THEME_FILE_RE.test(file)) add(`${dirent.name}/${file}`);
+                    }
+                } catch { /* unreadable subfolder */ }
             }
         }
     } catch { /* themes dir doesn't exist yet — that's fine */ }
@@ -58,11 +68,12 @@ export function getThemeCSS(themeId: string, swapDir: string, subdir: string = G
     }
     const prefix = 'user:';
     if (!themeId.startsWith(prefix)) return '';
-    const filename = basename(themeId.slice(prefix.length));
-    if (!filename) return '';
+    const parts = themeId.slice(prefix.length).split('/');
+    if (parts.length > 2 || parts.some(p => !p || p !== basename(p) || p === '..')) return '';
+    const rel = parts.join('/');
     try {
-        return readFileSync(join(swapDir, subdir, filename), 'utf-8');
-    } catch (err) { electronLog.warn('[KRH] Failed to read theme ' + filename + ':', err); return ''; }
+        return readFileSync(join(swapDir, subdir, ...parts), 'utf-8');
+    } catch (err) { electronLog.warn('[KRH] Failed to read theme ' + rel + ':', err); return ''; }
 }
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);

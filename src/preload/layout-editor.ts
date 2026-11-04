@@ -1,12 +1,12 @@
 // ── Overlay layout editor ──
-// One drag-and-drop screen for the on-screen overlays (nuke counter, Spotify card, Twitch chat), instead of typing
+// One drag-and-drop screen for the on-screen overlays (stat counters, Spotify card, Twitch chat), instead of typing
 // X / Y numbers in three different settings pages. Every enabled overlay gets a dashed box you can drag; the
 // position is saved and applied right away. Open it with the key from Settings (default Ctrl+Alt+L).
 // The keystrokes overlay sits at a fixed spot in the game HUD, so it is not part of this.
 
 import { ipcRenderer } from 'electron';
 import { DEFAULT_CONFIG } from '../main/config-defaults';
-import { setNukeCounter } from './nuke-counter';
+import { applyStatCounterConfig } from './stat-counter';
 import { setSpotifyOverlay } from './spotify-overlay';
 import { setTwitchChat } from './twitch-chat';
 import { matchCombo, typingInField } from './hotkey';
@@ -24,7 +24,7 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { key: 'nukeCounter', label: 'Nuke counter', elId: 'krh-nuke-counter', fallback: { w: 160, h: 46 }, apply: (c) => setNukeCounter({ ...DEFAULT_CONFIG.nukeCounter, ...c }) },
+  { key: 'nukeCounter', label: 'Stat counters', elId: 'krh-stat-stack', fallback: { w: 200, h: 120 }, apply: (c) => applyStatCounterConfig({ ...DEFAULT_CONFIG.nukeCounter, ...c }) },
   { key: 'spotify', label: 'Spotify card', elId: 'krh-spotify', fallback: { w: 300, h: 76 }, apply: (c) => setSpotifyOverlay({ ...DEFAULT_CONFIG.spotify, ...c }) },
   { key: 'twitch', label: 'Twitch chat', elId: 'krh-twitch-chat', fallback: { w: 360, h: 300 }, apply: (c) => setTwitchChat({ ...DEFAULT_CONFIG.twitch, ...c }) },
 ];
@@ -75,9 +75,10 @@ export async function openLayoutEditor(): Promise<void> {
   const cfgs = new Map<Key, any>();
   for (const t of TARGETS) {
     const c = await ipcRenderer.invoke('get-config', t.key).catch(() => null);
-    if (c && c.enabled) cfgs.set(t.key, c);
+    // Separate stat counters are placed one by one with the Move button in Settings > Appearance
+    if (c && c.enabled && !(t.key === 'nukeCounter' && c.layout === 'separate')) cfgs.set(t.key, c);
   }
-  if (cfgs.size === 0) { showToast('Turn on the nuke counter, Spotify card or Twitch chat first'); return; }
+  if (cfgs.size === 0) { showToast('Turn on the stat counters (stacked layout), Spotify card or Twitch chat first'); return; }
 
   root = document.createElement('div');
   root.id = ROOT_ID;

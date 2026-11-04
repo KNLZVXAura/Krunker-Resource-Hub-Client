@@ -95,3 +95,33 @@ Not taken: the Fortnite and Valorant sound packs (ripped from copyrighted games)
 - Source: https://github.com/google/material-design-icons (npm package `material-icons`)
 - Used for: the icon font inside the KRH Dashboard window (`src/main/material-icons-font.ts`). The game page brings the same font itself; the dashboard has no game page.
 - License text: https://www.apache.org/licenses/LICENSE-2.0
+
+## msgpack-lite
+
+- Source: https://github.com/kawanet/msgpack-lite (version 0.1.26)
+- Author: Yusuke Kawasaki
+- License: MIT, full text in `assets/userscript-libs/msgpack-lite-LICENSE.txt`
+
+Used for: `assets/userscript-libs/msgpack-lite-0.1.26.min.js`, the library the Krunker Reconnector example userscript asks for with `@require`. It is bundled **unmodified** and only handed to userscripts that request that exact address.
+
+## Example userscripts and ideas from the Krunker community
+
+- `assets/example-userscripts/Krunker_Reconnector.js`: by Swat, included **unmodified** as supplied. No license is stated in the file.
+- `assets/example-userscripts/Quick_Krunker_Docs_Integration.js`: by KNLZVX, included **unmodified** as supplied. No license is stated in the file.
+- Server List Filter: the idea and the default word list come from j4k0xb's Krunker Serverlist Filter (https://github.com/j4k0xb/Krunker-Serverlist-Filter); the code in `src/shared/server-filter.ts` and `src/preload/serverlist-filter.ts` is written for this client.
+- Separate Game Loop: the idea is KNLZVX's (input and game updates on their own timer, drawing once per frame); the code in `src/preload/game-loop.ts` is written for this client.
+
+## Kute 1.3.0, additional code (GPL-3.0, code adapted)
+
+- Source: https://github.com/NullDev/Kute
+- `src/preload/inventory-scroll.ts`: ported from `src/frontend/modules/inventoryScroll.js` (types added, class names and log prefix changed).
+
+## Krunker Civilian Client 1.3.2 (GPL-3.0, code adapted)
+
+- Source: https://github.com/bigjakk/krunker-civilian-client
+- `src/preload/stat-counter.ts`, `src/preload/match-stats.ts`, `src/main/official-maps.ts`, the `decodeFrame` function in `src/preload/game-socket.ts`, the Game Brightness code in `src/preload/utils.ts`, the swapper folder watcher / wrong-folder check in `src/main/swapper.ts`, the theme subfolder support in `src/main/css-themes.ts`, `src/main/links.ts` and the macOS DMG files in `build/` (`dmg-settings.py`, `dmg-verify.py`, `dmgbuild-alias-only.py`). Names and ids changed from KCC to KRH; the DMG background is a new KRH image.
+
+## krapio (MIT, documentation only)
+
+- Source: https://github.com/NullDev/krapio, https://nulldev.github.io/krapio/
+- `src/main/game-api.ts` calls the public Krunker game API endpoints that krapio documents (paths, parameters and field names). No krapio code is included.

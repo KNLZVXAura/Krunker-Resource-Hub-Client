@@ -4,7 +4,7 @@
 // Idea: the Quick Play grid of the Water Client (https://github.com/ghostypostie/Water); written from scratch.
 
 import { ipcRenderer } from 'electron';
-import { fetchGame, MATCHMAKER_GAMEMODE_FILTER, MATCHMAKER_REGIONS, MATCHMAKER_REGION_NAMES, MATCHMAKER_MAP_FILTER, MATCHMAKER_MAP_NAMES, mapIconUrl } from './matchmaker';
+import { fetchGame, MATCHMAKER_REGIONS, MATCHMAKER_REGION_NAMES, MATCHMAKER_MAP_NAMES, mapIconUrl, matchmakerMapNames, matchmakerModeItems } from './matchmaker';
 import type { MatchmakerConfig } from './matchmaker';
 import { savedConsole as _console } from './saved-console';
 import { RAIDS, joinRaid, joinTradePlaza, joinArg, tradePlazaInfo } from './quick-join';
@@ -92,8 +92,8 @@ async function build(): Promise<void> {
   const body = document.createElement('div');
   body.className = 'qp-body';
   tiles(body, 'Regions', MATCHMAKER_REGIONS.map((r) => ({ value: r, label: MATCHMAKER_REGION_NAMES[r] || r })), 'regions');
-  tiles(body, 'Gamemodes', MATCHMAKER_GAMEMODE_FILTER.map((g) => ({ value: g, label: g })), 'gamemodes');
-  tiles(body, 'Maps', MATCHMAKER_MAP_FILTER.map((m) => ({ value: m, label: MATCHMAKER_MAP_NAMES[m] || m, icon: mapIconUrl(m) ?? undefined })), 'maps');
+  tiles(body, 'Gamemodes', matchmakerModeItems(((mm as any).gamemodes as string[]) || []), 'gamemodes');
+  tiles(body, 'Maps', matchmakerMapNames().map((m) => ({ value: m, label: MATCHMAKER_MAP_NAMES[m] || m.replace(/_/g, ' '), icon: mapIconUrl(m) ?? undefined })), 'maps');
   // Raids and Trade Plaza (idea from Lombre_Blanche's matchmaker script)
   const rh = document.createElement('h4');
   rh.textContent = 'Raids and Trade';

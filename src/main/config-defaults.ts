@@ -94,7 +94,6 @@ export interface ExtrasConfig {
   chatDraft: boolean;
   /** Remember Krunker's Match End Message separately for every account (adapted from Kute). */
   accountEndMessage: boolean;
-  /** A quick tap of Shift (in menus) starts the same area snip as the Screenshot Area hotkey, like Snipping Tool. */
   /** Escape out of a match without the ~2 s wait before you can click back in (adapted from NM/NZ Client). */
   escapeFastRelease: boolean;
   /** Match and life accuracy under the top-centre HUD (an estimate; adapted from NM/NZ Client). */
@@ -104,6 +103,10 @@ export interface ExtrasConfig {
   settingPresets: SettingPreset[];
   liveAccuracy: { enabled: boolean; placement: 'top' | 'bottom' };
   /** Frame-time HUD (FPS and 1% / 0.1% lows), toggled with `key`. */
+  /** Hide servers whose map name contains one of the words from Krunker's server browser (idea: j4k0xb's Serverlist Filter). */
+  serverFilter: { enabled: boolean; words: string };
+  /** EXPERIMENTAL: run the game's frame on its own timer between screen frames, drawing only once per screen frame. */
+  gameLoop: { enabled: boolean; intervalMs: number };
   perfHud: { key: string; corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; detail: 'fps' | 'full'; startOn: boolean };
   /** Extra Discord presence features. Each needs matching Art Assets in the Discord app (see DISCORD-ART.md). */
   rpcRich: {
@@ -161,6 +164,8 @@ export interface AppConfig {
     cpuThrottle: number;
     /** CPU throttling multiplier while in menus (1 = off, max 3). */
     cpuThrottleMenu: number;
+    /** Dual-GPU laptops: run on the dedicated GPU (default on). */
+    highPerformanceGpu: boolean;
   };
   game: {
     lastServer: string;
@@ -202,13 +207,18 @@ export interface AppConfig {
     showAuxKeys: boolean;
     mouseEnabled: boolean;
   };
+  // Named before it counted more than nukes; renaming would orphan saved settings
   nukeCounter: {
     enabled: boolean;
-    goal: number;
+    stats: string[];
+    goals: Record<string, number>;
+    layout: 'stacked' | 'separate';
+    session: boolean;
     background: boolean;
     scale: number;
     x: number;
     y: number;
+    positions: Record<string, { x: number; y: number }>;
   };
   twitch: {
     enabled: boolean;
@@ -270,6 +280,8 @@ export interface AppConfig {
     sortByPlayers: boolean;
     hideSearchOverlay: boolean;
     rankedMatchSound: string;
+    /** 0-100, volume of the ranked match found sound. */
+    rankedMatchVolume: number;
   };
   keybinds: {
     reload: Keybind;
@@ -286,6 +298,8 @@ export interface AppConfig {
     recordPause: Keybind;
     hubToggle: Keybind;
     dashboard: Keybind;
+    openSocial: Keybind;
+    openEditor: Keybind;
   };
   userscripts: {
     enabled: boolean;
@@ -294,6 +308,8 @@ export interface AppConfig {
   ui: {
     showExitButton: boolean;
     deathscreenAnimation: boolean;
+    /** Dims or brightens the 3D game view only (20-150 %, 100 = off). */
+    gameBrightness: number;
     hideMenuPopups: boolean;
     menuTimer: boolean;
     cleanMenu: boolean;
@@ -371,6 +387,8 @@ export const DEFAULT_KEYBINDS: AppConfig['keybinds'] = {
   recordPause:       { key: 'F7',     ctrl: false, shift: false, alt: false },
   hubToggle:         { key: 'h',      ctrl: true,  shift: false, alt: false },
   dashboard:         { key: 'd',      ctrl: true,  shift: true,  alt: false },
+  openSocial:        { key: 's',      ctrl: true,  shift: false, alt: false },
+  openEditor:        { key: 'e',      ctrl: true,  shift: false, alt: false },
 };
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -389,6 +407,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     processPriority: 'Normal',
     cpuThrottle: 1,
     cpuThrottleMenu: 1,
+    highPerformanceGpu: true,
   },
   game: {
     lastServer: '',
@@ -427,11 +446,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   nukeCounter: {
     enabled: false,
-    goal: 0,
+    stats: ['nukes', 'kills', 'wins'],
+    goals: {},
+    layout: 'stacked',
+    session: false,
     background: true,
     scale: 1,
     x: 95,
     y: 62,
+    positions: {},
   },
   twitch: {
     enabled: false,
@@ -488,6 +511,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     nameColors: { friends: '', clans: '' },
     settingPresets: [],
     liveAccuracy: { enabled: false, placement: 'top' },
+    serverFilter: { enabled: false, words: 'infect, trade, trading, fun-parkour' },
+    gameLoop: { enabled: false, intervalMs: 8 },
     perfHud: { key: 'F10', corner: 'top-left', detail: 'full', startOn: false },
     rpcRich: { classIcon: true, mapArt: true, join: false },
     updateMode: 'ask',
@@ -520,6 +545,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     sortByPlayers: false,
     hideSearchOverlay: false,
     rankedMatchSound: '',
+    rankedMatchVolume: 100,
   },
   keybinds: DEFAULT_KEYBINDS,
   userscripts: {
@@ -529,6 +555,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   ui: {
     showExitButton: true,
     deathscreenAnimation: true,
+    gameBrightness: 100,
     hideMenuPopups: false,
     menuTimer: true,
     cleanMenu: false,

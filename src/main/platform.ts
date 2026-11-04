@@ -136,6 +136,8 @@ export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['adva
   // WebGL is mandatory for Krunker — force it past any GPU blocklist.
   // On Chromium 134+ the blocklist is stricter and silently disables WebGL on many Linux GPUs.
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
+  // Dual-GPU laptops otherwise default to the integrated GPU unless the user sets a per-app preference
+  if (performance?.highPerformanceGpu !== false) app.commandLine.appendSwitch('force-high-performance-gpu');
 
   // ── GPU-aware tuning (NVIDIA / Intel / hybrid laptops / weak GPUs) ──
   // Detected from the OS before the GPU process starts (see gpu-detect.ts). Settings > Performance >
@@ -217,6 +219,8 @@ export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['adva
     app.commandLine.appendSwitch('disable-logging');
     app.commandLine.appendSwitch('disable-hang-monitor');
     app.commandLine.appendSwitch('disable-2d-canvas-clip-aa');
+    // Windows: skip the extra GPU process that only collects DirectX 12 info after launch
+    if (process.platform === 'win32') app.commandLine.appendSwitch('disable-gpu-process-for-dx12-info-collection');
     disableFeatures('MediaRouter');
   }
 

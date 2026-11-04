@@ -10,6 +10,7 @@ import { getStats, kd, fmtDuration, summaryText, topMap } from './session-stats'
 import { renderMarkdown } from '../shared/markdown';
 import { redact } from '../shared/redact';
 import { electronLog } from './logger';
+import { liveData, type LiveKind } from './game-api';
 import type { DoctorResult } from './perf-doctor';
 import type { NewsResult } from './news-feed';
 import type { AutoDisabled } from './userscript-guard';
@@ -64,6 +65,7 @@ const KEYBIND_LABELS: Record<string, string> = {
   devTools: 'Developer tools', matchmaker: 'Find a match', matchmakerCancel: 'Cancel the search', fullscreenToggle: 'Fullscreen',
   screenshot: 'Screenshot', screenshotArea: 'Screenshot area', record: 'Record', recordPause: 'Pause recording',
   hubToggle: 'Open / hide the KRH website window', dashboard: 'Show / hide the dashboard over the game',
+  openSocial: 'Open Krunker Social', openEditor: 'Open the Krunker Editor',
 };
 /** A Krunker game link: the real host, a game code, nothing else. */
 const GAME_URL = /^https:\/\/krunker\.io\/\?game=[A-Za-z0-9:._-]{3,64}$/;
@@ -194,6 +196,10 @@ export function registerExtras(deps: ExtraDeps): void {
   h('dash:guard-list', () => ({ items: deps.scriptGuard.list() }));
   h('dash:guard-reenable', async (_e, file: unknown) => ({ ok: typeof file === 'string' && file.length < 200 ? await deps.scriptGuard.reenable(file) : false }));
   h('dash:guard-dismiss', (_e, file: unknown) => { if (typeof file === 'string' && file.length < 200) deps.scriptGuard.dismiss(file); return true; });
+
+  // ── Live data (players, clans, Turf Wars, leaderboards, market) ──
+  h('dash:live', (_e, kind: unknown, arg: unknown) =>
+    typeof kind === 'string' ? liveData(kind as LiveKind, (arg && typeof arg === 'object' ? arg : {}) as Record<string, unknown>) : { ok: false, error: 'Invalid request' });
 
   // ── Servers ──
   h('dash:servers', async (_e, force: unknown) => {

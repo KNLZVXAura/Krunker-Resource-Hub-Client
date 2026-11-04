@@ -1,8 +1,8 @@
-import { BrowserWindow, net } from 'electron';
+import { BrowserWindow } from 'electron';
 import { QUEUE_NOTIFICATION_AUDIO } from './ranked-queue-audio';
 import { devWindowIcon } from './platform';
-import { electronLog } from './logger';
-import { OFFICIAL_MAPS, mapImageUrl } from './maps';
+import { mapImageUrl, type OfficialMap } from './maps';
+import { loadOfficialMaps } from './official-maps';
 
 export const DEFAULT_RANKED_AUDIO_URL = `data:audio/mpeg;base64,${QUEUE_NOTIFICATION_AUDIO}`;
 
@@ -10,34 +10,17 @@ let queueWindow: BrowserWindow | null = null;
 
 const RANKED_QUEUE_WS = 'wss://gamefrontend.svc.krunker.io/v1/matchmaking/queue';
 
-const MAPS_URL = 'https://gapi.svc.krunker.io/maps';
-
 type QueueMaps = Record<string, { number: number; image: string }>;
 
-function toQueueMaps(entries: [number, string][]): QueueMaps {
+// The ranked pool changes every season, so the queue offers (and can name) every official map
+function toQueueMaps(officialMaps: OfficialMap[]): QueueMaps {
     const maps: QueueMaps = {};
-    for (const [id, name] of entries) maps[name.replace(/_/g, ' ')] = { number: id, image: mapImageUrl(id) };
+    for (const { id, name } of officialMaps) maps[name.replace(/_/g, ' ')] = { number: id, image: mapImageUrl(id) };
     return maps;
 }
 
-let liveMaps: Promise<QueueMaps> | null = null;
-
-// The ranked pool changes every season, so queue for (and name) every official map, read live from Krunker
 export function loadQueueMaps(): Promise<QueueMaps> {
-    liveMaps ??= net.fetch(MAPS_URL, { signal: AbortSignal.timeout(4000) })
-        .then((res) => res.json())
-        .then((body: { data?: { id?: unknown; name?: unknown }[] }) => {
-            const entries = (body.data ?? []).filter((m): m is { id: number; name: string } =>
-                Number.isInteger(m.id) && (m.id as number) >= 0 && typeof m.name === 'string');
-            if (!entries.length) throw new Error('empty map table');
-            return toQueueMaps(entries.map((m) => [m.id, m.name]));
-        })
-        .catch((err) => {
-            electronLog.warn('[KRH-Ranked] Live map list unavailable, using the bundled one:', err);
-            liveMaps = null;
-            return toQueueMaps(OFFICIAL_MAPS.map((name, i) => [i, name]));
-        });
-    return liveMaps;
+    return loadOfficialMaps().then(toQueueMaps);
 }
 
 const RANKED_REGIONS: Record<string, string> = {
@@ -288,7 +271,7 @@ function jsLiteral(value: unknown): string {
         .replace(/>/g, '\\u003e');
 }
 
-function buildQueueScript(token: string, region: string, allRegions: boolean, audioUrl: string, maps: QueueMaps): string {
+function buildQueueScript(token: string, region: string, allRegions: boolean, audioUrl: string, maps: QueueMaps, volume: number): string {
     return `
 let isQueued = false;
 let queueStartTime = null;
@@ -305,6 +288,7 @@ const INIT_TOKEN = ${jsLiteral(token)};
 const INIT_REGION = ${jsLiteral(region)};
 const INIT_ALL_REGIONS = ${jsLiteral(allRegions)};
 const AUDIO_URL = ${jsLiteral(audioUrl)};
+const AUDIO_VOLUME = ${jsLiteral(volume)};
 const FALLBACK_AUDIO_URL = ${JSON.stringify(DEFAULT_RANKED_AUDIO_URL)};
 const maps = ${jsLiteral(maps)};
 const regions = ${buildRegionsJson()};
@@ -344,6 +328,7 @@ function loadSettings() {
 function loadNotificationAudio(url) {
     const audio = new Audio(url);
     audio.preload = 'auto';
+    audio.volume = AUDIO_VOLUME;
     audio.load();
     return audio;
 }
@@ -576,7 +561,7 @@ loadSettings();
 `;
 }
 
-function buildQueueHtml(token: string, region: string, allRegions: boolean, audioUrl: string, showHeader: boolean, maps: QueueMaps): string {
+function buildQueueHtml(token: string, region: string, allRegions: boolean, audioUrl: string, showHeader: boolean, maps: QueueMaps, volume = 1): string {
     const header = showHeader ? `  <div class="queue-header">
     <div class="queue-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg></div>
     <div class="queue-head-text">
@@ -622,7 +607,7 @@ ${header}  <div class="queue-body">
     </div>
   </div>
 </div>
-<script>${buildQueueScript(token, region, allRegions, audioUrl, maps)}</script>
+<script>${buildQueueScript(token, region, allRegions, audioUrl, maps, volume)}</script>
 </body>
 </html>`;
 }
@@ -634,6 +619,7 @@ export function openRankedQueue(
     audioUrl: string,
     showHeader: boolean,
     maps: QueueMaps,
+    volume = 1,
 ): void {
     if (queueWindow && !queueWindow.isDestroyed()) {
         queueWindow.focus();
@@ -659,6 +645,6 @@ export function openRankedQueue(
     queueWindow = win;
     win.on('closed', () => { queueWindow = null; });
 
-    const html = buildQueueHtml(token, region, allRegions, audioUrl, showHeader, maps);
+    const html = buildQueueHtml(token, region, allRegions, audioUrl, showHeader, maps, volume);
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
 }

@@ -551,12 +551,12 @@ function renderUserscriptsSection(body: HTMLElement, dashboard = false): void {
 
     engineGroup.appendChild(createButtonRow({
       label: 'Example Userscripts',
-      desc: 'Adds Class Roulette (a random class on every respawn) and Quick Sell by Rarity, both from Kute, to the scripts folder. They start switched off, and files that already exist are never replaced.',
+      desc: 'Adds four scripts to the scripts folder: Class Roulette (a random class on every respawn) and Quick Sell by Rarity (both from Kute), Krunker Reconnector (by Swat: starts your private game again after "Server limit reached") and Quick Krunker Docs Integration (by KNLZVX: the Quick KrunkScript docs in the Editor and scripting screen). They start switched off, and files that already exist are never replaced.',
       buttons: [{ icon: 'download', label: 'Install', title: 'Copy the example scripts into the scripts folder', onClick: () => {
         void ipcRenderer.invoke('install-example-userscripts').then((r: { ok: boolean; error: string; added: string[] }) => {
           if (!r.ok) { showToast(r.error); return; }
           showToast(r.added.length
-            ? 'Installed ' + r.added.join(' and ') + '. Reload the page, then switch them on in the list below'
+            ? 'Installed ' + r.added.join(', ') + '. Reload the page, then switch them on in the list below'
             : 'The example scripts are already in your scripts folder');
         });
       } }],

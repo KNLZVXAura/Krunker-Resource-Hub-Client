@@ -1,17 +1,17 @@
 import { ipcRenderer } from 'electron';
-import { fetchGame } from './matchmaker';
+import { fetchGame, loadMatchmakerLists } from './matchmaker';
 import type { MatchmakerConfig } from './matchmaker';
 import { hookSettings } from './settings-render';
 import { hookNativeImport } from './native-import';
 import { initUserscripts } from './userscripts';
 import { initTranslator } from './translator';
-import { installCompositorAnimFix, setDeathAnimBlock, setMenuTimer, setWatermark, showToast } from './utils';
+import { clampBrightness, installCompositorAnimFix, setDeathAnimBlock, setGameBrightness, setMenuTimer, setWatermark, showToast } from './utils';
 import { initChat } from './chat';
 import { initHPCounter, initRankProgress } from './competitive';
 import { initKeystrokes } from './keystrokes';
 import type { KeystrokesConfig } from './keystrokes';
-import { setNukeCounter } from './nuke-counter';
-import type { NukeCounterConfig } from './nuke-counter';
+import { initStatCounter } from './stat-counter';
+import { installInventoryScroll } from './inventory-scroll';
 import { setTwitchChat } from './twitch-chat';
 import type { TwitchChatConfig } from './twitch-chat';
 import { setSpotifyOverlay } from './spotify-overlay';
@@ -19,6 +19,8 @@ import type { SpotifyOverlayConfig } from './spotify-overlay';
 import { checkChangelog } from './changelog';
 import { DEFAULT_CONFIG } from '../main/config-defaults';
 import { savedConsole as _console, setVerbose } from './saved-console';
+import { setServerFilter } from './serverlist-filter';
+import { setGameLoop } from './game-loop';
 import { initAltManagerButton } from './alt-manager';
 import { startHidePopups, setClassicSocial, initModManagerButton, setCleanMenu, setSelectableChat, setQuickClassPicker, setClassicMenu } from './menu-tweaks';
 import { initUiStateReporter } from './ui-state';
@@ -62,8 +64,8 @@ installSkyHook();
 // ── Fast Escape: report pointer-lock state to main so Escape can be taken there (game page only) ──
 if (location.origin === 'https://krunker.io') installEscapeLockRelease();
 
-// preventDefault on wheel events avoids Chromium 100+ pacing frame production to vsync during scroll gestures (FPS would tank from 1000+ to refresh rate). Skip when target is inside a real scrollable element so menus still scroll.
-window.addEventListener('wheel', (e: WheelEvent) => {
+// preventDefault on wheel events avoids Chromium 100+ pacing frame production to vsync during scroll gestures (FPS would tank from 1000+ to refresh rate). Skip when target is inside a real scrollable element so menus still scroll. krunker.io only: community.krunker.io scrolls the document.
+if (location.origin === 'https://krunker.io') window.addEventListener('wheel', (e: WheelEvent) => {
     // Pointer lock = in-game weapon scroll: nothing is scrollable, and the
     // ancestor walk below forces style+layout (getComputedStyle/scrollHeight)
     // on every wheel tick mid-combat. Block the gesture without walking.
@@ -183,6 +185,25 @@ ipcRenderer.on('krh-toast', (_e, msg: string, action?: { label: string; id: stri
   } else showToast(msg);
 });
 
+// Re-link swapped krunker.io stylesheets under a fresh URL: the memory cache would otherwise keep the old copy.
+// The swapper ignores the query string, so the new URL still resolves to the swap file.
+ipcRenderer.on('swap-css-reload', (_e, paths: string[]) => {
+  const wanted = new Set(paths.map((p) => p.toLowerCase()));
+  for (const link of document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) {
+    if (!link.href || link.dataset.krhStale) continue;
+    const url = new URL(link.href);
+    if (!/(^|\.)krunker\.io$/.test(url.hostname) || !wanted.has(url.pathname.toLowerCase())) continue;
+    url.searchParams.set('krhSwap', String(Date.now()));
+    const fresh = link.cloneNode() as HTMLLinkElement;
+    fresh.href = url.href;
+    link.dataset.krhStale = '1';
+    // Keep the old sheet until the new one applies, so there is no unstyled flash
+    fresh.addEventListener('load', () => link.remove(), { once: true });
+    fresh.addEventListener('error', () => { fresh.remove(); delete link.dataset.krhStale; }, { once: true });
+    link.after(fresh);
+  }
+});
+
 // Ranked leaderboard search: must wrap fetch before the social page requests the rankings, so it is
 // installed right away (not after the config round-trip below) and switched off later if disabled.
 if (window.location.pathname === '/social.html' || window.location.pathname === '/' || window.location.pathname === '') installRankedLeaderboardSearch();
@@ -231,6 +252,7 @@ ipcRenderer.on('main_did-finish-load', () => {
     if (uiConf?.rankedLeaderboardSearch === false) disableRankedLeaderboardSearch();
     if (isGamePage) installCompositorAnimFix();
     if (uiConf?.deathscreenAnimation) setDeathAnimBlock(true);
+    if (isGamePage) setGameBrightness(clampBrightness(uiConf?.gameBrightness));
     if (uiConf?.hideMenuPopups) startHidePopups();
     if (uiConf?.menuTimer ?? true) setMenuTimer(true);
     if (isGamePage && uiConf?.cleanMenu) setCleanMenu(true);
@@ -238,6 +260,8 @@ ipcRenderer.on('main_did-finish-load', () => {
     if (isGamePage) initUiStateReporter();
     if (isGamePage && uiConf?.classicSocial) setClassicSocial(true);
     if (isGamePage) initModManagerButton();
+    if (isGamePage) loadMatchmakerLists();
+    if (isGamePage && !SAFE) installInventoryScroll();
 
     if (isGamePage) {
       initSocialMusic({
@@ -315,11 +339,10 @@ ipcRenderer.on('main_did-finish-load', () => {
       }).catch((err) => _console.warn('[KRH] keystrokes config load failed:', err));
     }
 
-    // ── Nuke counter overlay ──
+    // ── Stat counter overlay (config key stays `nukeCounter`) ──
     if (isGamePage && !SAFE) {
-      ipcRenderer.invoke('get-config', 'nukeCounter').then((ncConf: NukeCounterConfig | undefined) => {
-        if (ncConf && ncConf.enabled) setNukeCounter({ ...DEFAULT_CONFIG.nukeCounter, ...ncConf });
-      }).catch((err) => _console.warn('[KRH] nuke counter config load failed:', err));
+      ipcRenderer.invoke('get-config', 'nukeCounter').then(initStatCounter)
+        .catch((err) => _console.warn('[KRH] stat counter config load failed:', err));
     }
 
     // ── Twitch chat overlay ──
@@ -355,6 +378,8 @@ ipcRenderer.on('main_did-finish-load', () => {
         if (ex.accountEndMessage) void setAccountEndMessage(true);
         if (ex.liveAccuracy?.enabled) setLiveAccuracy(true, ex.liveAccuracy.placement);
         if (ex.perfHud) setPerfHud(ex.perfHud);
+        setServerFilter(ex.serverFilter?.enabled === true, ex.serverFilter?.words ?? '');
+        if (ex.gameLoop?.enabled) setGameLoop(ex.gameLoop);
         if (ex.nameColors) initNameColors(ex.nameColors);
         // Version 1.1: streamer mode, session stats, instant replay key and the overlay layout editor
         initStreamerMode(ex.streamerMode, ex.streamerKey);

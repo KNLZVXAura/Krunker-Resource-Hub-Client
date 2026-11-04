@@ -11,6 +11,11 @@ export interface ScriptMetadata {
   license: string;
   runAt: 'document-start' | 'document-end';
   priority: number;
+  /** Tampermonkey-style page filters: the script only runs on pages that match one of `match`/`include` and none of `exclude`. */
+  match: string[];
+  exclude: string[];
+  /** Libraries to load first (only the ones the client ships are available, see main/userscript-libs). */
+  require: string[];
 }
 
 export interface UserscriptSetting {
@@ -52,6 +57,9 @@ export function parseMetadata(code: string): ScriptMetadata {
     license: '',
     runAt: 'document-end',
     priority: 0,
+    match: [],
+    exclude: [],
+    require: [],
   };
 
   const startMatch = code.match(/\/\/\s*==UserScript==/);
@@ -83,6 +91,10 @@ export function parseMetadata(code: string): ScriptMetadata {
       case 'priority':
         meta.priority = parseInt(v, 10) || 0;
         break;
+      case 'match':
+      case 'include': if (v) meta.match.push(v); break;
+      case 'exclude': if (v) meta.exclude.push(v); break;
+      case 'require': if (v) meta.require.push(v); break;
     }
   }
 
@@ -104,6 +116,39 @@ function toggleCSS(css: string, identifier: string, value: boolean): void {
   }
 }
 
+// ── Tampermonkey compatibility: @match / @exclude and @require ──
+
+/** www.krunker.io and krunker.io are the same site for these filters. */
+function plainUrl(u: string): string { return u.replace('://www.', '://'); }
+
+function patternToRegex(pattern: string): RegExp {
+  let p = plainUrl(pattern.trim());
+  if (/^[a-z*]+:\/\/[^/]+$/i.test(p)) p += '/*'; // "https://docs.krunker.io" means the whole site root
+  const src = p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp('^' + src + '$', 'i');
+}
+
+/** True when the script may run on this page. A script with no @match/@include runs everywhere, as before. */
+export function matchesPage(meta: ScriptMetadata, url: string = window.location.href): boolean {
+  const here = plainUrl(url);
+  try {
+    if (meta.exclude.some((p) => patternToRegex(p).test(here))) return false;
+    return !meta.match.length || meta.match.some((p) => patternToRegex(p).test(here));
+  } catch { return true; }
+}
+
+const loadedLibs = new Set<string>();
+
+/** Run the libraries a script asked for with @require. Only libraries bundled with the client exist; others are skipped. */
+function loadRequires(meta: ScriptMetadata, _console: { warn: (...args: unknown[]) => void }): void {
+  for (const url of meta.require) {
+    if (loadedLibs.has(url)) continue;
+    const code = ipcRenderer.sendSync('userscripts-require', url) as string;
+    if (!code) { _console.warn('[KRH] Userscript library is not available offline, skipped:', url); continue; }
+    try { new Function(code).call(window); loadedLibs.add(url); } catch (err) { _console.warn('[KRH] Userscript library failed:', url, err); }
+  }
+}
+
 // ── Script execution ──
 
 function executeScript(
@@ -111,6 +156,7 @@ function executeScript(
   _console: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
 ): void {
   if (instance.executed) return;
+  loadRequires(instance.meta, _console);
 
   const context: Record<string, unknown> = {
     _console,
@@ -128,16 +174,18 @@ function executeScript(
       if (document.readyState !== 'loading') {
         const _origAdd = EventTarget.prototype.addEventListener;
         EventTarget.prototype.addEventListener = function(type, fn, opts) {
-          if ((this === window || this === document) && type === 'DOMContentLoaded') {
-            Promise.resolve().then(() => fn.call(this, new Event('DOMContentLoaded')));
+          if ((this === window || this === document) && (type === 'DOMContentLoaded' || (type === 'load' && document.readyState === 'complete'))) {
+            Promise.resolve().then(() => fn.call(this, new Event(type)));
             return;
           }
           return _origAdd.call(this, type, fn, opts);
         };
         try { ${instance.content}\n } finally { EventTarget.prototype.addEventListener = _origAdd; }
       } else { ${instance.content}\n }`;
-    const fn = new Function(wrapped);
-    const result = fn.apply(context);
+    // Names Tampermonkey scripts expect: unsafeWindow is the page window here, GM_setClipboard copies text.
+    const gmSetClipboard = (text: unknown): void => { void navigator.clipboard.writeText(String(text)).catch(() => { /* needs focus */ }); };
+    const fn = new Function('unsafeWindow', 'GM_setClipboard', wrapped);
+    const result = fn.apply(context, [window, gmSetClipboard]);
 
     // Script returned `this` — capture settings and unload
     if (result === context) {
@@ -207,7 +255,7 @@ export async function initUserscripts(
 
   // Execute document-start scripts
   for (const inst of instances) {
-    if (inst.enabled && inst.meta.runAt === 'document-start') {
+    if (inst.enabled && inst.meta.runAt === 'document-start' && matchesPage(inst.meta)) {
       executeScript(inst, _console);
       await applyPreferences(inst);
     }
@@ -216,7 +264,7 @@ export async function initUserscripts(
   // Execute document-end scripts
   const runDocEnd = () => {
     for (const inst of instances) {
-      if (inst.enabled && inst.meta.runAt === 'document-end' && !inst.executed) {
+      if (inst.enabled && inst.meta.runAt === 'document-end' && !inst.executed && matchesPage(inst.meta)) {
         executeScript(inst, _console);
         applyPreferences(inst);
       }

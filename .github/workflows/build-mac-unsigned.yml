@@ -19,9 +19,11 @@ jobs:
         env:
           KRH_REQUIRE_SIGNED: ''
         run: npm run dist:mac
-      - run: ls -lh out/*.dmg
+      - run: ls -lh out/*.dmg out/*-Portable.zip
       - uses: actions/upload-artifact@v7
         with:
           name: KRH-Client-mac-arm64
-          path: out/*.dmg
+          path: |
+            out/*.dmg
+            out/*-Portable.zip
           if-no-files-found: error

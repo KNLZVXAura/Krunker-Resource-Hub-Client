@@ -130,8 +130,12 @@ export function startMotionBlur(initialOptions: MotionBlurOptions, runtimeOption
     outputCanvas.style.top = `${rect.top}px`;
     outputCanvas.style.width = `${rect.width}px`;
     outputCanvas.style.height = `${rect.height}px`;
-    const sourceZIndex = getComputedStyle(sourceCanvas).zIndex;
+    const sourceStyle = getComputedStyle(sourceCanvas);
+    const sourceZIndex = sourceStyle.zIndex;
     outputCanvas.style.zIndex = sourceZIndex === 'auto' ? '0' : sourceZIndex;
+    // Krunker's Saturation / Hue settings are a CSS filter on the game canvas; the blur copy would show the
+    // unfiltered colours while it is active. Same idea as the Kute 1.3.0 motion blur saturation fix.
+    outputCanvas.style.filter = sourceStyle.filter === 'none' ? '' : sourceStyle.filter;
   };
   const attachToCanvas = (canvas: HTMLCanvasElement) => {
     if (canvas === sourceCanvas && outputCanvas?.isConnected) return;

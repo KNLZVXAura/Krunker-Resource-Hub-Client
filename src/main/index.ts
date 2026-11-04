@@ -21,6 +21,9 @@ import { registerSiteBridge } from './site-bridge';
 import { recordGameUrl, recordGameTitle, cacheLimitMb } from './dashboard-extras';
 import exampleClassRoulette from '../../assets/example-userscripts/classRoulette.js?raw';
 import exampleQuickSell from '../../assets/example-userscripts/quickSellByRarity.js?raw';
+import exampleReconnector from '../../assets/example-userscripts/Krunker_Reconnector.js?raw';
+import exampleDocs from '../../assets/example-userscripts/Quick_Krunker_Docs_Integration.js?raw';
+import libMsgpack from '../../assets/userscript-libs/msgpack-lite-0.1.26.min.js?raw';
 import { ALL_CLIENT_CSS, HIDE_ADS_CSS, CONSENT_DISMISS_JS } from './client-ui';
 import { electronLog, rendererLog, getLogPath, closeLogStreams } from './logger';
 import { checkForUpdate, downloadUpdate, installUpdate, checkForUpdateNotice, diagnoseUpdate, RELEASES_URL } from './updater';
@@ -35,6 +38,7 @@ import { DiscordRPC } from './discord-rpc';
 import { listThemes, getThemeCSS, listLoadingThemes, getLoadingScreenCSS, GAME_THEMES_DIR, SOCIAL_THEMES_DIR } from './css-themes';
 import { TabManager } from './tab-manager';
 import { openRankedQueue, loadQueueMaps, DEFAULT_RANKED_AUDIO_URL } from './ranked-queue';
+import { loadOfficialMaps } from './official-maps';
 import { takeScreenshot, takeAreaScreenshot, openScreenshotsFolder, revealLastScreenshot } from './screenshot';
 import { toggleRecording, togglePauseRecording, stopRecording, openRecordingsFolder, startReplayBuffer, stopReplayBuffer, saveReplayClip, setReplaySeconds, replayActive } from './recorder';
 import { installPackFromUrl, installPackFromFile, listPacks, deletePack, PACK_ID_RE } from './packs';
@@ -246,8 +250,11 @@ if (advancedConfig.angleBackend && !validBackends.includes(advancedConfig.angleB
   config.set('advanced', { ...config.get('advanced'), angleBackend: 'default' });
 }
 
+// The KRH Official theme was dropped before release; anyone who tried a test build goes back to no theme
+if (config.get('ui')?.cssTheme === 'preset:krh-official') config.set('ui', { ...DEFAULT_CONFIG.ui, ...config.get('ui'), cssTheme: 'disabled' });
+
 applyPlatformFlags(platformInfo, advancedConfig, perfConfig);
-ensureHighPerformanceGpu();
+if (config.get('performance')?.highPerformanceGpu !== false) ensureHighPerformanceGpu();
 {
   const g = getGpuProfileInfo();
   if (g) {
@@ -367,6 +374,9 @@ const BLOCKED_URL_PATTERNS = [
   '*://cdn.ravenjs.com/*',
   '*://*.poll.fish/*',
   '*://unpkg.com/web3*',
+  // Twitter widget scripts the game loads for its social embeds (from Krunker Civilian Client 1.3.2)
+  '*://*.twitter.com/*',
+  '*://platform.twitter.com/*',
   // From NM/NZ Client's list: more consent, ad-network and analytics hosts
   '*://*.onetrust.com/*',
   '*://*.adinplay.com/*',
@@ -724,7 +734,8 @@ async function launchApp(): Promise<void> {
 
   // The swapper also runs for switched-on resource packs, even when the user's own swapper folder is off.
   const startupPacks = safeMode ? [] : (((config.get('extras') as Partial<ExtrasConfig> | undefined)?.packs?.enabled) || []);
-  const userSwapper = swapperConfig.enabled && !safeMode;
+  // Always on (like Krunker Civilian Client 1.3.2): any file in the swapper folder loads, changes apply without a restart
+  const userSwapper = !safeMode;
   const swapper = userSwapper || startupPacks.length ? new ResourceSwapper(swapDir, { userFiles: userSwapper, packs: startupPacks }) : null;
   electronLog.log(`[KRH] Resource swapper: ${swapper ? 'enabled' : 'disabled'} (${swapDir}), packs: ${startupPacks.length}${safeMode ? ' [safe mode]' : ''}`);
 
@@ -1432,6 +1443,12 @@ async function launchApp(): Promise<void> {
     } else if (matchesKeybind(input, binds.copyGameLink)) {
       clipboard.writeText(win.webContents.getURL());
       event.preventDefault();
+    } else if (matchesKeybind(input, binds.openSocial)) {
+      tabManager.openOrFocusTab('https://krunker.io/social.html');
+      event.preventDefault();
+    } else if (matchesKeybind(input, binds.openEditor)) {
+      tabManager.openOrFocusTab('https://krunker.io/editor.html');
+      event.preventDefault();
     } else if (matchesKeybind(input, binds.devTools)) {
       win.webContents.toggleDevTools();
       event.preventDefault();
@@ -1525,7 +1542,18 @@ async function launchApp(): Promise<void> {
     () => config.get('game.rememberTabs') ?? false,
     socialThemeCSS,
   );
+  // Open Social / Open Editor also work while a Krunker tab has focus
+  const wireTabKeys = (): void => {
+    tabManager.onExtraShortcut = (input) => {
+      if (input.type !== 'keyDown' || keybindCapturing) return false;
+      const binds = getKeybinds();
+      if (matchesKeybind(input, binds.openSocial)) { tabManager.openOrFocusTab('https://krunker.io/social.html'); return true; }
+      if (matchesKeybind(input, binds.openEditor)) { tabManager.openOrFocusTab('https://krunker.io/editor.html'); return true; }
+      return false;
+    };
+  };
   tabManager.gameLauncher = (u) => launchGame(u);
+  wireTabKeys();
 
   // Intercept in-page navigation (e.g. window.location = '/social.html')
   win.webContents.on('will-navigate', (event, url) => {
@@ -1590,31 +1618,63 @@ async function launchApp(): Promise<void> {
     })()`).catch((err) => electronLog.warn('[KRH] User CSS inject failed:', err));
   };
 
+  // Theme from swapper/themes/: a <style> tag (not insertCSS) so @import rules work; re-run when the choice or the file changes
+  const applyGameTheme = (): void => {
+    if (win.isDestroyed()) return;
+    const themeId = safeMode ? 'disabled' : (config.get('ui')?.cssTheme || 'disabled');
+    const themeCSS = getThemeCSS(themeId, swapDir);
+    electronLog.log(`[KRH] CSS theme: id=${themeId}, css=${themeCSS ? themeCSS.length + ' chars' : 'none'}`);
+    win.webContents.executeJavaScript(`(() => {
+      const css = ${JSON.stringify(themeCSS)};
+      let s = document.getElementById('krh-user-theme');
+      if (!css) { if (s) s.remove(); return; }
+      if (!s) {
+        s = document.createElement('style');
+        s.id = 'krh-user-theme';
+        (document.head || document.documentElement).appendChild(s);
+      }
+      s.textContent = css;
+    })()`).catch((err) => electronLog.warn('[KRH] Theme inject failed:', err));
+  };
+
+  if (swapper) {
+    swapper.onFilesChange = (paths) => {
+      if (win.isDestroyed()) return;
+      const lower = paths.map((p) => p.toLowerCase());
+      const css = paths.filter((_p, i) => lower[i].endsWith('.css'));
+      if (css.length) win.webContents.send('swap-css-reload', css);
+      if (lower.some((p) => p.startsWith(`/${GAME_THEMES_DIR}/`))) applyGameTheme();
+      if (lower.some((p) => p.startsWith(`/${SOCIAL_THEMES_DIR}/`))) tabManager.refreshSocialTheme();
+    };
+  }
+
+  let misplacedWarned = false;
+  // Fallback for when the swap folder watcher couldn't start or has stopped
+  win.webContents.on('did-start-navigation', (details) => {
+    if (!swapper || swapper.watching || !details.isMainFrame || details.isSameDocument) return;
+    swapper.rescan().catch((err) => electronLog.warn('[KRH] Swapper rescan failed:', err));
+  });
+
   // ── Inject scripts after page loads ──
   win.webContents.on('did-finish-load', () => {
     electronLog.log(`[KRH] Page loaded: ${win.webContents.getURL()}`);
-    // Rescan swap directory so new/changed files are picked up on refresh
-    if (swapper) swapper.rescan().catch((err) => electronLog.warn('[KRH] Swapper rescan failed:', err));
+    if (swapper) {
+      // The renderer memory cache serves F5 the stylesheet it already had, so the request never reaches the swapper
+      const swappedCss = swapper.cssPaths();
+      if (swappedCss.length) win.webContents.send('swap-css-reload', swappedCss);
+      if (!misplacedWarned && swapper.misplaced().length) {
+        misplacedWarned = true;
+        win.webContents.send('krh-toast', 'Some swapper files are in the wrong folder and won\'t load. See Settings > Client > Swapper');
+      }
+    }
 
     const cssInjections = [
       win.webContents.insertCSS(HIDE_ADS_CSS),
       win.webContents.insertCSS(ALL_CLIENT_CSS),
     ];
 
-    // Inject user CSS theme via <style> tag so @import rules work
     const uiConf = config.get('ui');
-    const themeId = safeMode ? 'disabled' : (uiConf?.cssTheme || 'disabled');
-    const themeCSS = getThemeCSS(themeId, swapDir);
-    electronLog.log(`[KRH] CSS theme: id=${themeId}, css=${themeCSS ? themeCSS.length + ' chars' : 'none'}`);
-    if (themeCSS) {
-      // Use <style> tag via executeJavaScript so @import rules work (insertCSS doesn't support them).
-      win.webContents.executeJavaScript(`(() => {
-        const s = document.createElement('style');
-        s.id = 'krh-user-theme';
-        s.textContent = ${JSON.stringify(themeCSS)};
-        document.head.appendChild(s);
-      })()`).catch((err) => electronLog.warn('[KRH] Theme inject failed:', err));
-    }
+    applyGameTheme();
 
     applyUserCss();
 
@@ -1740,6 +1800,14 @@ async function launchApp(): Promise<void> {
       liveAccuracy: {
         enabled: bool(v.liveAccuracy?.enabled, d.liveAccuracy.enabled),
         placement: v.liveAccuracy?.placement === 'bottom' ? 'bottom' : 'top',
+      },
+      serverFilter: {
+        enabled: bool(v.serverFilter?.enabled, d.serverFilter.enabled),
+        words: str(v.serverFilter?.words, d.serverFilter.words, 600),
+      },
+      gameLoop: {
+        enabled: bool(v.gameLoop?.enabled, d.gameLoop.enabled),
+        intervalMs: numIn(v.gameLoop?.intervalMs, d.gameLoop.intervalMs, 4, 33),
       },
       perfHud: {
         key: str(v.perfHud?.key, d.perfHud.key, 20),
@@ -1885,12 +1953,16 @@ async function launchApp(): Promise<void> {
 
   // Example userscripts (Class Roulette and Quick Sell by Rarity, both from Kute): copied into the userscripts
   // folder on request, never over a file that is already there. New scripts start switched off.
+  // @require libraries a userscript may ask for: only the ones shipped with the client (no download, nothing else is served).
+  ipcMain.on('userscripts-require', (e, url: unknown) => {
+    e.returnValue = url === 'https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js' ? libMsgpack : '';
+  });
   ipcMain.handle('install-example-userscripts', () => {
     if (!userscriptManager) return { ok: false, error: 'Turn on Userscripts in the Userscripts settings and restart the client first.', added: [] as string[] };
     const added: string[] = [];
     const existing: string[] = [];
     try {
-      for (const [name, code] of [['classRoulette.js', exampleClassRoulette], ['quickSellByRarity.js', exampleQuickSell]] as const) {
+      for (const [name, code] of [['classRoulette.js', exampleClassRoulette], ['quickSellByRarity.js', exampleQuickSell], ['Krunker_Reconnector.js', exampleReconnector], ['Quick_Krunker_Docs_Integration.js', exampleDocs]] as const) {
         const target = join(userscriptManager.dir, name);
         if (existsSync(target)) { existing.push(name); continue; }
         writeFileSync(target, code, 'utf-8');
@@ -2140,12 +2212,15 @@ async function launchApp(): Promise<void> {
             socialThemeCSS,
           );
           tabManager.gameLauncher = (u) => launchGame(u);
+          wireTabKeys();
         }
       }
     }
     if (key === 'twitch') applyTwitch(value as Partial<TwitchConfig>);
     if (key === 'spotify') applySpotify(value as Partial<SpotifyConfig>);
     if (key === 'ui') {
+      // Game CSS theme applies as soon as it is picked
+      if (((value as any)?.cssTheme || 'disabled') !== (config.get('ui')?.cssTheme || 'disabled')) setTimeout(applyGameTheme, 0);
       // Social CSS theme swaps live on open tabs
       const next = (value as any)?.socialCssTheme || 'disabled';
       if (next !== socialTheme) {
@@ -2176,6 +2251,8 @@ async function launchApp(): Promise<void> {
   });
   ipcMain.handle('get-swap-dir', () => swapDir);
   ipcMain.handle('open-swap-folder', () => shell.openPath(swapDir));
+  ipcMain.handle('swap-misplaced', () => swapper ? swapper.misplaced() : []);
+  ipcMain.handle('swap-fix-misplaced', () => swapper ? swapper.fixMisplaced() : { moved: 0, skipped: 0 });
   // External swapper: points Krunker resources at https links (externalResourceSwapper.json in the swap folder)
   ipcMain.handle('open-external-swap-file', () => {
     const file = join(swapDir, EXTERNAL_SWAP_FILE);
@@ -2245,12 +2322,15 @@ async function launchApp(): Promise<void> {
   // Measure once shortly after start-up, so even the first search of a session has numbers ready.
   setTimeout(() => { if (config.get('matchmaker')?.enabled) void refreshRegionPings(); }, 8000);
 
+  ipcMain.handle('get-official-maps', () => loadOfficialMaps());
+
   // ── Ranked queue IPC handler ──
   ipcMain.on('open-ranked-queue', async (_e, token: string, region: string, allRegions: boolean) => {
     const mm = config.get('matchmaker');
     const [audioUrl, maps] = await Promise.all([resolveRankedAudioUrl(mm?.rankedMatchSound || ''), loadQueueMaps()]);
     const showHeader = config.get('ui')?.watermark ?? true;
-    openRankedQueue(token, region, allRegions, audioUrl, showHeader, maps);
+    const vol = typeof mm?.rankedMatchVolume === 'number' ? Math.min(100, Math.max(0, mm.rankedMatchVolume)) / 100 : 1;
+    openRankedQueue(token, region, allRegions, audioUrl, showHeader, maps, vol);
   });
 
   ipcMain.handle('pick-audio-file', async () => {

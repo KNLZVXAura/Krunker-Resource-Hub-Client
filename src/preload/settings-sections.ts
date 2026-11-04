@@ -8,7 +8,7 @@ import type { Keybind } from '../main/config';
 import { DEFAULT_CONFIG } from '../main/config-defaults';
 import type { ExtrasConfig } from '../main/config-defaults';
 import type { SocialMusicSource } from '../main/config-defaults';
-import { setDeathAnimBlock, setMenuTimer, setWatermark, showToast } from './utils';
+import { BRIGHTNESS_MIN, BRIGHTNESS_MAX, clampBrightness, setDeathAnimBlock, setGameBrightness, setMenuTimer, setWatermark, showToast } from './utils';
 import {
   createKeybindRow, createSimpleKeyRow, createToggleRow, createSelectRow,
   createNumberRow, createCheckboxGrid, createButtonRow, createTextRow,
@@ -37,8 +37,7 @@ import type { HeadshotSoundMode } from './headshot-sound';
 import { setTradeDing } from './trade-ding';
 import { updateKeystrokes } from './keystrokes';
 import type { KeystrokesConfig } from './keystrokes';
-import { setNukeCounter } from './nuke-counter';
-import type { NukeCounterConfig } from './nuke-counter';
+import { STATS, statCounterConfig, updateStatCounter, openStatCounterEditor } from './stat-counter';
 import { setTwitchChat } from './twitch-chat';
 import type { TwitchChatConfig } from './twitch-chat';
 import { setSpotifyOverlay } from './spotify-overlay';
@@ -47,7 +46,9 @@ import { setBetterChat, setAutoHideChat, setChatHistorySize } from './chat';
 import { updateTranslatorConfig } from './translator';
 import { showChangelogNow } from './changelog';
 import { setVerbose } from './saved-console';
-import { MATCHMAKER_GAMEMODE_FILTER, MATCHMAKER_REGIONS, MATCHMAKER_REGION_NAMES, MATCHMAKER_MAP_FILTER, MATCHMAKER_MAP_NAMES, mapIconUrl } from './matchmaker';
+import { setServerFilter } from './serverlist-filter';
+import { setGameLoop } from './game-loop';
+import { MATCHMAKER_REGIONS, MATCHMAKER_REGION_NAMES, MATCHMAKER_MAP_NAMES, mapIconUrl, matchmakerMapNames, matchmakerModeItems } from './matchmaker';
 
 export interface SettingsBag {
   binds: Record<string, Keybind>;
@@ -189,6 +190,16 @@ export function buildGeneralSection(
 
   hotkeysGroup.appendChild(createKeybindRow('Open / Hide KRH Hub', 'Bring the KRH window up over the game without closing the game, press again to hide it (default Ctrl+H)', bag.binds.hubToggle, (b) => {
     bag.binds.hubToggle = b;
+    bag.saveBinds();
+  }, undefined, true));
+
+  hotkeysGroup.appendChild(createKeybindRow('Open Krunker Social', 'Open krunker.io/social.html in a tab, or bring it forward if it is already open (default Ctrl+S)', bag.binds.openSocial, (b) => {
+    bag.binds.openSocial = b;
+    bag.saveBinds();
+  }, undefined, true));
+
+  hotkeysGroup.appendChild(createKeybindRow('Open Krunker Editor', 'Open krunker.io/editor.html in a tab, or bring it forward if it is already open (default Ctrl+E)', bag.binds.openEditor, (b) => {
+    bag.binds.openEditor = b;
     bag.saveBinds();
   }, undefined, true));
 
@@ -437,6 +448,13 @@ export function buildGameSection(
     desc: 'Disable the slide-in animation on the death screen',
     checked: ui.deathscreenAnimation, instant: true,
     onChange: (v) => { ui.deathscreenAnimation = v; saveUI(); setDeathAnimBlock(v); },
+  }));
+
+  worldGroup.appendChild(createNumberRow({
+    label: 'Game Brightness',
+    desc: 'Dim or brighten the 3D game view (20% to 150%). The HUD, nametags and menus are unaffected',
+    min: BRIGHTNESS_MIN, max: BRIGHTNESS_MAX, step: 5, value: clampBrightness(ui.gameBrightness), instant: true,
+    onChange: (v) => { ui.gameBrightness = v; saveUI(); setGameBrightness(v); },
   }));
 
   const menuGroup = createGroup(body, 'Menu');
@@ -696,6 +714,13 @@ export function buildPerformanceSection(
     onChange: (v) => { perf.cpuThrottleMenu = v; applyPerf(false); },
   }));
 
+  sysGroup.appendChild(createToggleRow({
+    label: 'High-Performance GPU',
+    desc: 'On laptops with two graphics chips, run the client on the dedicated GPU instead of the integrated one. More FPS, but more heat and battery use',
+    checked: perf.highPerformanceGpu !== false, restart: true,
+    onChange: (v) => { perf.highPerformanceGpu = v; savePerf(); },
+  }));
+
   // GPU profile: auto-detects NVIDIA / Intel / weak GPUs at startup (see main/gpu-detect.ts + platform.ts)
   const gpuRow = createSelectRow({
     label: 'GPU Profile',
@@ -792,30 +817,22 @@ export function buildPerformanceSection(
 }
 
 export function buildSwapperSection(body: HTMLElement, swapperConf: any, uiConfRaw: any): void {
-  const swapEnabled = swapperConf ? swapperConf.enabled : DEFAULT_CONFIG.swapper.enabled;
+  void swapperConf;
   const ui = uiConfRaw;
 
   function saveUI(): void {
     ipcRenderer.invoke('set-config', 'ui', ui);
   }
 
-  const group = createGroup(body);
+  // Above everything else: this is where people land when their swaps don't load
+  const misplacedHolder = document.createElement('div');
+  body.appendChild(misplacedHolder);
 
-  group.appendChild(createToggleRow({
-    label: 'Resource Swapper',
-    desc: 'Replace game textures, sounds, and models with local files',
-    checked: swapEnabled,
-    restart: true,
-    onChange: (v) => {
-      ipcRenderer.invoke('get-config', 'swapper').then((conf: any) => {
-        ipcRenderer.invoke('set-config', 'swapper', { enabled: v, path: conf ? conf.path : '' });
-      });
-    },
-  }));
+  const group = createGroup(body);
 
   group.appendChild(createButtonRow({
     label: 'Swapper Folder',
-    desc: 'Place replacement assets here (textures/, sound/, models/)',
+    desc: 'Always on: replace game files with your own, in the same folders Krunker uses (textures/, sound/, models/). Changes apply without a restart',
     buttons: [{ icon: 'folder', label: 'Swapper', title: 'Open Folder', onClick: () => ipcRenderer.invoke('open-swap-folder') }],
   }).row);
 
@@ -824,6 +841,33 @@ export function buildSwapperSection(body: HTMLElement, swapperConf: any, uiConfR
     desc: 'Point a Krunker resource at a web link instead of a local file: edit externalResourceSwapper.json in the swapper folder ({ "/textures/foo.png": "https://…" }, https only). Applies after a page reload. The link must allow cross-origin loading (images, models).',
     buttons: [{ icon: 'edit_note', label: 'Open File', title: 'Show externalResourceSwapper.json', onClick: () => ipcRenderer.invoke('open-external-swap-file') }],
   }).row);
+
+  const renderMisplaced = (): void => {
+    ipcRenderer.invoke('swap-misplaced').then((list: Array<{ from: string; to: string; files: number; blocked: number }>) => {
+      misplacedHolder.innerHTML = '';
+      for (const m of list) {
+        let desc = m.from === 'main_custom.css'
+          ? 'main_custom.css is loose in the swapper folder, so Krunker never loads it. It belongs in css/main_custom.css.'
+          : `There's a swapper folder inside your swapper folder (${m.files} file${m.files === 1 ? '' : 's'}), so Krunker never finds them. They belong directly in swapper/.`;
+        if (m.blocked) desc += ` ${m.blocked} already ${m.blocked === 1 ? 'has a file' : 'have files'} in the right place and will be left alone.`;
+        const { row } = createButtonRow({
+          label: 'Files in the Wrong Folder',
+          desc,
+          buttons: [{
+            icon: 'drive_file_move', label: 'Move It', title: `Move to ${m.to}`,
+            onClick: () => {
+              ipcRenderer.invoke('swap-fix-misplaced').then((r: { moved: number; skipped: number }) => {
+                showToast(`Moved ${r.moved} file${r.moved === 1 ? '' : 's'}` + (r.skipped ? `, left ${r.skipped} that would overwrite an existing file` : ''));
+                renderMisplaced();
+              });
+            },
+          }],
+        });
+        misplacedHolder.appendChild(row);
+      }
+    }).catch(() => { /* swapper not running (safe mode) */ });
+  };
+  renderMisplaced();
 
   // ── Sky ──
   // Applies on the next map load; the map being played is already built.
@@ -856,9 +900,9 @@ export function buildSwapperSection(body: HTMLElement, swapperConf: any, uiConfR
     onChange: (v) => { ui.skyHorizon = v; saveUI(); },
   }));
 
-  // ── Sky Image (populated from swap/skies/) ──
+  // ── Sky Image (populated from swapper/skies/) ──
   // The image is wrapped around a dome, so flat photos distort badly.
-  const skyImgR = createRowShell('Sky Image', 'Use an image instead of the gradient — browse for one, or drop files into swap/skies/. Panoramic (equirectangular) images work best — ordinary photos will stretch');
+  const skyImgR = createRowShell('Sky Image', 'Use an image instead of the gradient — browse for one, or drop files into swapper/skies/. Panoramic (equirectangular) images work best — ordinary photos will stretch');
   const skyImgSelect = createSelect([{ value: 'disabled', label: 'Loading...' }], 'disabled');
   skyImgR.control.appendChild(skyImgSelect);
 
@@ -913,8 +957,8 @@ export function buildAppearanceSection(body: HTMLElement, uiConfRaw: any, ncConf
 
   const themeGroup = createGroup(body, 'Theme');
 
-  // ── CSS Theme selector (populated from swap/themes/) ──
-  const themeRowR = createRowShell('CSS Theme', 'Load a custom CSS theme from swap/themes/');
+  // ── CSS Theme selector (populated from swapper/themes/) ──
+  const themeRowR = createRowShell('CSS Theme', 'Load a custom CSS theme from swapper/themes/ (subfolders and .css.txt files work too)');
   const themeSelect = createSelect([{ value: 'disabled', label: 'Loading...' }], 'disabled');
   themeRowR.control.appendChild(themeSelect);
   themeRowR.control.appendChild(makeButton({ icon: 'folder', title: 'Open Themes Folder', onClick: () => ipcRenderer.invoke('open-themes-folder') }));
@@ -937,8 +981,8 @@ export function buildAppearanceSection(body: HTMLElement, uiConfRaw: any, ncConf
     onSettingChanged('refresh');
   });
 
-  // ── Social CSS Theme selector (populated from swap/socialthemes/) ──
-  const socialThemeRowR = createRowShell('Social CSS Theme', 'Load a custom CSS theme for social/hub tabs from swap/socialthemes/');
+  // ── Social CSS Theme selector (populated from swapper/socialthemes/) ──
+  const socialThemeRowR = createRowShell('Social CSS Theme', 'Load a custom CSS theme for social/hub tabs from swapper/socialthemes/');
   const socialThemeSelect = createSelect([{ value: 'disabled', label: 'Loading...' }], 'disabled');
   socialThemeRowR.control.appendChild(socialThemeSelect);
   socialThemeRowR.control.appendChild(makeButton({ icon: 'folder', title: 'Open Social Themes Folder', onClick: () => ipcRenderer.invoke('open-social-themes-folder') }));
@@ -961,63 +1005,90 @@ export function buildAppearanceSection(body: HTMLElement, uiConfRaw: any, ncConf
     saveUI();
   });
 
-  const nc: NukeCounterConfig = { ...DEFAULT_CONFIG.nukeCounter, ...ncConf };
+  const sc = statCounterConfig(ncConf);
+  const statGroup = createGroup(body, 'Stat Counters');
+  const statRows: HTMLElement[] = [];
+  const goalRows = new Map<string, HTMLElement>();
+  const syncStatRows = (): void => {
+    for (const r of statRows) r.classList.toggle('krh-row-hidden', !sc.enabled);
+    for (const [id, r] of goalRows) r.classList.toggle('krh-row-hidden', !sc.enabled || !sc.stats.includes(id));
+  };
+  const addStatRow = (row: HTMLElement): void => { statRows.push(row); statGroup.appendChild(row); };
 
-  function saveNuke(): void {
-    ipcRenderer.invoke('set-config', 'nukeCounter', nc);
-    setNukeCounter(nc);
+  statGroup.appendChild(createToggleRow({
+    label: 'Stat Counter Overlay',
+    desc: 'Show career stats like nukes, kills and wins in-game. Kills, headshots, wallbangs, melee and thrown kills and K/D update live; the rest when the match ends. (Ported from Krunker Civilian Client 1.3.2.)',
+    checked: sc.enabled, instant: true,
+    onChange: (v) => { updateStatCounter({ enabled: v }); syncStatRows(); },
+  }));
+
+  addStatRow(createCheckboxGrid({
+    header: 'Stats',
+    items: STATS.map((s) => ({ value: s.id, label: s.label })),
+    selected: [...sc.stats],
+    onChange: (selected) => {
+      updateStatCounter({ stats: STATS.map((s) => s.id).filter((id) => selected.includes(id)) });
+      syncStatRows();
+    },
+  }));
+
+  for (const def of STATS) {
+    if (def.ratio) continue;
+    const { row, input } = createTextRow({
+      label: def.label + ' Goal',
+      desc: def.tiers ? 'Blank aims for your next title. 0 hides the goal.' : 'Target shown next to the counter. Blank or 0 hides it.',
+      value: sc.goals[def.id] !== undefined ? String(sc.goals[def.id]) : '',
+      placeholder: def.tiers ? 'Next title' : 'None',
+      instant: true,
+      onChange: (v) => {
+        const goals = { ...sc.goals };
+        const n = Number(v.replace(/[\s,]/g, ''));
+        if (v === '') delete goals[def.id];
+        else if (Number.isSafeInteger(n) && n >= 0) goals[def.id] = n;
+        input.value = goals[def.id] !== undefined ? String(goals[def.id]) : '';
+        updateStatCounter({ goals });
+      },
+    });
+    goalRows.set(def.id, row);
+    statGroup.appendChild(row);
   }
 
-  const nukeGroup = createGroup(body, 'Nuke Counter');
-  const nukeSubRows: HTMLElement[] = [];
-  const syncNukeRows = (): void => {
-    for (const r of nukeSubRows) r.classList.toggle('krh-row-hidden', !nc.enabled);
-  };
-
-  nukeGroup.appendChild(createToggleRow({
-    label: 'Nuke Counter Overlay',
-    desc: 'Show your career nuke total in-game. Updates when a match ends.',
-    checked: nc.enabled, instant: true,
-    onChange: (v) => { nc.enabled = v; saveNuke(); syncNukeRows(); },
+  addStatRow(createSelectRow({
+    label: 'Layout',
+    desc: 'Stacked keeps every counter in one box. Separate lets you place each one on its own.',
+    options: [{ value: 'stacked', label: 'Stacked' }, { value: 'separate', label: 'Separate' }],
+    value: sc.layout, instant: true,
+    onChange: (v) => updateStatCounter({ layout: v === 'separate' ? 'separate' : 'stacked' }),
   }));
 
-  nukeSubRows.push(createNumberRow({
-    label: 'Nuke Goal',
-    desc: 'Target total shown next to the counter (1,833 / 2,500). 0 hides it.',
-    min: 0, max: 50000, value: nc.goal, instant: true,
-    onChange: (v) => { nc.goal = v; saveNuke(); },
+  addStatRow(createToggleRow({
+    label: 'Session Gain',
+    desc: 'Show how much each counter has grown since the client started (+12)',
+    checked: sc.session, instant: true,
+    onChange: (v) => updateStatCounter({ session: v }),
   }));
 
-  nukeSubRows.push(createToggleRow({
+  addStatRow(createToggleRow({
     label: 'Background',
-    desc: 'Dark backdrop behind the counter',
-    checked: nc.background, instant: true,
-    onChange: (v) => { nc.background = v; saveNuke(); },
+    desc: 'Dark backdrop behind the counters',
+    checked: sc.background, instant: true,
+    onChange: (v) => updateStatCounter({ background: v }),
   }));
 
-  nukeSubRows.push(createNumberRow({
+  addStatRow(createNumberRow({
     label: 'Scale',
-    desc: 'Visual size of the counter',
-    min: 0.5, max: 2, step: 0.05, value: nc.scale, instant: true,
-    onChange: (v) => { nc.scale = v; saveNuke(); },
+    desc: 'Visual size of the counters',
+    min: 0.5, max: 2, step: 0.05, value: sc.scale, instant: true,
+    onChange: (v) => updateStatCounter({ scale: v }),
   }));
 
-  nukeSubRows.push(createNumberRow({
-    label: 'X Position',
-    desc: 'Percent of screen width (50 = centered)',
-    min: 0, max: 100, step: 0.5, value: nc.x, instant: true,
-    onChange: (v) => { nc.x = v; saveNuke(); },
-  }));
+  addStatRow(createButtonRow({
+    label: 'Position',
+    desc: 'Drag the counters into place over the in-game HUD. Double-click one to reset it. (The Layout editor hotkey also moves the stacked box.)',
+    buttons: [{ icon: 'open_with', label: 'Move', onClick: openStatCounterEditor }],
+  }).row);
 
-  nukeSubRows.push(createNumberRow({
-    label: 'Y Position',
-    desc: 'Percent of screen height (50 = centered)',
-    min: 0, max: 100, step: 0.5, value: nc.y, instant: true,
-    onChange: (v) => { nc.y = v; saveNuke(); },
-  }));
-
-  for (const r of nukeSubRows) nukeGroup.appendChild(r);
-  syncNukeRows();
+  syncStatRows();
 
   // ── Twitch Chat ──
   const tw: TwitchChatConfig = { ...DEFAULT_CONFIG.twitch, ...twConf };
@@ -1376,7 +1447,7 @@ export function buildAppearanceSection(body: HTMLElement, uiConfRaw: any, ncConf
   const loadingGroup = createGroup(body, 'Loading Screen');
 
   // ── Loading Screen Background ──
-  const bgRowR = createRowShell('Loading Background', 'Custom background image for the loading screen (swap/backgrounds/)');
+  const bgRowR = createRowShell('Loading Background', 'Custom background image for the loading screen (swapper/backgrounds/)');
   const bgSelect = createSelect([{ value: 'disabled', label: 'Loading...' }], 'disabled');
   bgRowR.control.appendChild(bgSelect);
   bgRowR.control.appendChild(makeButton({ icon: 'folder', title: 'Open Backgrounds Folder', onClick: () => ipcRenderer.invoke('open-backgrounds-folder') }));
@@ -1500,15 +1571,15 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
   }));
 
   filtersGroup.appendChild(createCheckboxGrid({
-    header: 'Gamemodes (none selected = all)',
-    items: MATCHMAKER_GAMEMODE_FILTER.map(gm => ({ value: gm, label: gm })),
+    header: 'Gamemodes (none selected = every standard mode)',
+    items: matchmakerModeItems(mm.gamemodes),
     selected: mm.gamemodes,
     onChange: () => saveMM(),
   }));
 
   filtersGroup.appendChild(createCheckboxGrid({
-    header: 'Maps (none selected = all)',
-    items: MATCHMAKER_MAP_FILTER.map(m => ({ value: m, label: MATCHMAKER_MAP_NAMES[m] || m, icon: mapIconUrl(m) ?? undefined })),
+    header: 'Maps (none selected = every official map)',
+    items: matchmakerMapNames().map(m => ({ value: m, label: MATCHMAKER_MAP_NAMES[m] || m.replace(/_/g, ' '), icon: mapIconUrl(m) ?? undefined })),
     selected: mm.maps,
     onChange: () => saveMM(),
   }));
@@ -1541,6 +1612,7 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
     if (previewAudio) { previewAudio.pause(); resetPlayBtn(); return; }
     const url: string = await ipcRenderer.invoke('resolve-ranked-sound', soundInput.value.trim());
     previewAudio = new Audio(url);
+    previewAudio.volume = Math.min(1, Math.max(0, (mm.rankedMatchVolume ?? 100) / 100));
     soundPlayBtn.innerHTML = '<span class="material-icons">stop</span>';
     previewAudio.onended = () => resetPlayBtn();
     previewAudio.onerror = () => resetPlayBtn(true);
@@ -1549,6 +1621,12 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
   soundControl.appendChild(soundPlayBtn);
   const rankedGroup = createGroup(body, 'Ranked');
   rankedGroup.appendChild(soundR.row);
+  rankedGroup.appendChild(createNumberRow({
+    label: 'Ranked Match Sound Volume',
+    desc: 'Volume of the sound that plays when a ranked match is found',
+    min: 0, max: 100, step: 5, value: mm.rankedMatchVolume ?? 100, instant: true,
+    onChange: (v) => { mm.rankedMatchVolume = v; saveMM(); },
+  }));
 }
 
 export function buildDiscordSection(body: HTMLElement, discordConf: any): void {
@@ -1781,6 +1859,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     settingPresets: normalisePresets(exConf?.settingPresets),
     liveAccuracy: { ...DEFAULT_CONFIG.extras.liveAccuracy, ...(exConf?.liveAccuracy || {}) },
     perfHud: { ...DEFAULT_CONFIG.extras.perfHud, ...(exConf?.perfHud || {}) },
+    serverFilter: { ...DEFAULT_CONFIG.extras.serverFilter, ...(exConf?.serverFilter || {}) },
+    gameLoop: { ...DEFAULT_CONFIG.extras.gameLoop, ...(exConf?.gameLoop || {}) },
     rpcRich: { ...DEFAULT_CONFIG.extras.rpcRich, ...(exConf?.rpcRich || {}) },
     instantReplay: { ...DEFAULT_CONFIG.extras.instantReplay, ...(exConf?.instantReplay || {}) },
     sessionStats: { ...DEFAULT_CONFIG.extras.sessionStats, ...(exConf?.sessionStats || {}) },
@@ -2020,6 +2100,37 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     desc: 'Animated video skins (like Glitch) are not loaded, which saves FPS. Takes effect the next time the game loads. Idea from Kute.',
     checked: ex.disableVideoSkins, refreshOnly: true,
     onChange: (v) => { ex.disableVideoSkins = v; save(); },
+  }));
+
+  // ── Server list ──
+  const sl = createGroup(body, 'Server List');
+  const slApply = (): void => { save(); setServerFilter(ex.serverFilter.enabled, ex.serverFilter.words); };
+  sl.appendChild(createToggleRow({
+    label: 'Server List Filter',
+    desc: 'Hides the servers whose map name contains one of the words below from Krunker\'s server browser. It works on the server list answer itself, so the game is not changed. Idea and default words from j4k0xb\'s Serverlist Filter.',
+    checked: ex.serverFilter.enabled, instant: true,
+    onChange: (v) => { ex.serverFilter.enabled = v; slApply(); },
+  }));
+  sl.appendChild(createTextRow({
+    label: 'Hidden Map Words',
+    desc: 'Separate the words with commas. A server is hidden when its map name contains any of them (case does not matter). Applies the next time the server list is loaded.',
+    value: ex.serverFilter.words, placeholder: 'infect, trade, trading, fun-parkour', instant: true,
+    onChange: (v) => { ex.serverFilter.words = v.slice(0, 600); slApply(); },
+  }).row);
+
+  // ── Experiments ──
+  const xp = createGroup(body, 'Experiments');
+  const glApply = (): void => { save(); setGameLoop(ex.gameLoop); };
+  xp.appendChild(createToggleRow({
+    label: 'Separate Game Loop (Experimental)',
+    desc: 'Runs the game\'s frame between screen frames, so key presses and game updates are handled several times per screen frame while only one of them is drawn, to get low input delay without uncapped FPS. Idea by KNLZVX. WebGL only and not tested in every mode: if the game looks wrong (missing shadows or reflections) or plays worse, turn it off.',
+    checked: ex.gameLoop.enabled, instant: true,
+    onChange: (v) => { ex.gameLoop.enabled = v; glApply(); },
+  }));
+  xp.appendChild(createNumberRow({
+    label: 'Game Loop Interval', desc: 'Milliseconds between the extra game runs. 4 is the lowest a browser timer allows (250 per second), 8 is a lighter default (125 per second).',
+    min: 4, max: 33, step: 1, value: ex.gameLoop.intervalMs, instant: true,
+    onChange: (v) => { ex.gameLoop.intervalMs = v; glApply(); },
   }));
 
   // ── Convenience (all three adapted from Kute) ──

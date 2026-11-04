@@ -439,7 +439,7 @@ export class TabManager {
         return view;
     }
 
-    // ── Social CSS theme (swap/socialthemes/) ──
+    // ── Social CSS theme (swapper/socialthemes/) ──
     // Injected as a <style> tag rather than insertCSS so @import rules work.
     private applySocialTheme(wc: Electron.WebContents, css: string = this.getSocialThemeCSS()): void {
         wc.executeJavaScript(`(() => {
@@ -624,7 +624,25 @@ export class TabManager {
     }
 
     // ── Shared shortcut handler (returns true if handled) ──
+    /** Open a krunker.io page, or bring it forward when a tab already shows it. */
+    openOrFocusTab(url: string): number {
+        const existing = this.tabs.find(t => t.url === url);
+        if (existing) {
+            this.switchToTab(existing.id);
+            this.showTabs();
+            return existing.id;
+        }
+        return this.openTab(url);
+    }
+
+    /** Extra shortcuts from the main process (Open Social / Open Editor), also active while a tab has focus. */
+    onExtraShortcut: ((input: Electron.Input) => boolean) | null = null;
+
     private handleTabShortcut(event: Electron.Event, input: Electron.Input): boolean {
+        if (this.onExtraShortcut?.(input)) {
+            event.preventDefault();
+            return true;
+        }
         if (input.key === 'Escape' && !input.control && !input.shift && !input.alt) {
             if (this.mode === 'same') this.hideTabs();
             else this.mainWin.focus();
