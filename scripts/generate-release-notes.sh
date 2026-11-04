@@ -12,6 +12,13 @@ set -eo pipefail
 TAG="${1:?Usage: generate-release-notes.sh <tag> [prev-ref]}"
 PREV_REF="${2:-}"
 
+# A hand-written patch note wins over the commit list: release-notes/<tag>.md (e.g. release-notes/v3.0.0.md)
+NOTES_FILE="$(dirname "$0")/../release-notes/${TAG}.md"
+if [ -f "$NOTES_FILE" ]; then
+  cat "$NOTES_FILE"
+  exit 0
+fi
+
 # If no prev-ref provided, try to find one from git tags
 if [ -z "$PREV_REF" ]; then
   PREV_REF=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)

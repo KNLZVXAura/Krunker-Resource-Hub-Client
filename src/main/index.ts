@@ -23,6 +23,7 @@ import exampleClassRoulette from '../../assets/example-userscripts/classRoulette
 import exampleQuickSell from '../../assets/example-userscripts/quickSellByRarity.js?raw';
 import exampleReconnector from '../../assets/example-userscripts/Krunker_Reconnector.js?raw';
 import exampleDocs from '../../assets/example-userscripts/Quick_Krunker_Docs_Integration.js?raw';
+import exampleKillStreak from '../../assets/example-userscripts/killstreak.js?raw';
 import libMsgpack from '../../assets/userscript-libs/msgpack-lite-0.1.26.min.js?raw';
 import { ALL_CLIENT_CSS, HIDE_ADS_CSS, CONSENT_DISMISS_JS } from './client-ui';
 import { electronLog, rendererLog, getLogPath, closeLogStreams } from './logger';
@@ -1951,7 +1952,7 @@ async function launchApp(): Promise<void> {
     return true;
   });
 
-  // Example userscripts (Class Roulette and Quick Sell by Rarity, both from Kute): copied into the userscripts
+  // Example userscripts (Class Roulette and Quick Sell by Rarity, both from Kute; Kill Streak by KRH): copied into the userscripts
   // folder on request, never over a file that is already there. New scripts start switched off.
   // @require libraries a userscript may ask for: only the ones shipped with the client (no download, nothing else is served).
   ipcMain.on('userscripts-require', (e, url: unknown) => {
@@ -1962,7 +1963,7 @@ async function launchApp(): Promise<void> {
     const added: string[] = [];
     const existing: string[] = [];
     try {
-      for (const [name, code] of [['classRoulette.js', exampleClassRoulette], ['quickSellByRarity.js', exampleQuickSell], ['Krunker_Reconnector.js', exampleReconnector], ['Quick_Krunker_Docs_Integration.js', exampleDocs]] as const) {
+      for (const [name, code] of [['classRoulette.js', exampleClassRoulette], ['quickSellByRarity.js', exampleQuickSell], ['Krunker_Reconnector.js', exampleReconnector], ['Quick_Krunker_Docs_Integration.js', exampleDocs], ['killstreak.js', exampleKillStreak]] as const) {
         const target = join(userscriptManager.dir, name);
         if (existsSync(target)) { existing.push(name); continue; }
         writeFileSync(target, code, 'utf-8');
