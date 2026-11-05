@@ -81,9 +81,9 @@ const MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const MAX_BG_BYTES = 15 * 1024 * 1024;
 const LINKS = new Set([
-  'https://github.com/krunkerresourcehub/krh-client/releases',
-  'https://github.com/krunkerresourcehub/krh-client/issues',
-  'https://github.com/krunkerresourcehub/krh-client',
+  'https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases',
+  'https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/issues',
+  'https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client',
 ]);
 
 let win: BrowserWindow | null = null;

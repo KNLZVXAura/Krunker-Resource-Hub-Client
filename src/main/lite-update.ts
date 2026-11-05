@@ -23,7 +23,7 @@ import { sha512, swapAsar } from './lite-swap';
 import { electronLog } from './logger';
 
 /** Where releases are published. Matches `homepage` in package.json. */
-const RELEASES = { owner: 'krunkerresourcehub', repo: 'krh-client' } as const;
+const RELEASES = { owner: 'KNLZVXAura', repo: 'Krunker-Resource-Hub-Client' } as const;
 
 /** A download only counts as stuck when NO data has arrived for this long (a slow but moving one is fine). */
 const STALL_MS = 60_000;

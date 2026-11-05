@@ -1,0 +1,32 @@
+name: Build Windows MSI (manual)
+
+# Test build of the .msi installer only. Run it from the Actions tab:
+# "Build Windows MSI (manual)" -> Run workflow. The MSI shows up under "Artifacts" on the run page.
+# (The normal release workflow builds the MSI too and attaches it to the release.)
+on:
+  workflow_dispatch:
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        shell: bash
+        run: npm ci --legacy-peer-deps
+      - name: Build source
+        shell: bash
+        run: npm run build
+      - name: Build MSI
+        shell: bash
+        run: npx electron-builder --win msi --x64 -c.electronDist=node_modules/electron/dist --publish never
+      - shell: bash
+        run: ls -lh out/*.msi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: KRH-Client-msi
+          path: out/*.msi
+          if-no-files-found: error

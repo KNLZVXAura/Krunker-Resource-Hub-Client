@@ -111,6 +111,44 @@ jobs:
             out/lite/*.asar
           if-no-files-found: error
 
+  build-msi:
+    name: Build Windows MSI
+    needs: version-check
+    if: needs.version-check.outputs.SKIP == 'false' || inputs.force_build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      # On Windows the postinstall script puts the patched Electron into node_modules/electron/dist
+      - name: Install dependencies
+        shell: bash
+        run: npm ci --legacy-peer-deps
+
+      - name: Build source
+        shell: bash
+        run: npm run build
+
+      - name: Build MSI
+        shell: bash
+        run: npx electron-builder --win msi --x64 -c.electronDist=node_modules/electron/dist --publish never
+
+      - name: Report build size
+        shell: bash
+        run: ls -lh out/*.msi
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-msi
+          path: out/*.msi
+          if-no-files-found: error
+
   build-mac:
     name: Build macOS (arm64)
     needs: version-check
@@ -207,7 +245,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [version-check, build-desktop, build-mac]
+    needs: [version-check, build-desktop, build-msi, build-mac]
     # Publish only from main: a dispatch on another branch runs the build jobs (for
     # test artifacts) but must never cut a --latest release of unmerged code. When the Apple
     # secrets are not configured the macOS DMG is only ad-hoc signed; the release is still
@@ -232,6 +270,7 @@ jobs:
         with:
           subject-path: |
             out/*.exe
+            out/*.msi
             out/*.AppImage
             out/*.deb
             out/*.dmg
@@ -255,12 +294,25 @@ jobs:
           The macOS (Apple Silicon) DMG and Portable zip are not notarized by Apple, so Gatekeeper warns on first launch. On macOS 14 and earlier, right-click the app, choose **Open**, then **Open** again. On macOS 15 (Sequoia) and later, try to open the app once, then go to **System Settings > Privacy & Security** and click **Open Anyway**. If macOS says the app is damaged, run `xattr -cr "/Applications/KRH Client.app"` (or the path of the portable app) in Terminal and open it again.
           EOF
 
+      - name: Note Windows MSI
+        run: |
+          cat >> /tmp/release-notes.md <<'EOF'
+
+          ## Windows MSI note
+          The `.msi` installer is not code-signed, so Windows SmartScreen may warn on first launch. If the MSI will not open or install:
+          - **"Windows protected your PC"**: click **More info**, then **Run anyway**.
+          - **Nothing happens or the file is blocked**: right-click the `.msi`, choose **Properties**, tick **Unblock** at the bottom, click **OK** and open it again.
+          - **Error 1603, 1618 or "another installation is in progress"**: close other installers (or restart Windows), then try again. If an older KRH Client is installed, remove it under **Settings > Apps > Installed apps** first.
+          - **Still failing**: open **Command Prompt** in the folder of the file and run `msiexec /i "KRH.Client-VERSION-Setup.msi" /L*v install.log` (use the real file name), then send `install.log` in an issue. You can also use the normal `Setup.exe` or the Portable version instead, they need no MSI.
+          - An antivirus can block a new installer. Check the SHA-256 checksum of the release page and allow the file if it matches.
+          EOF
+
       - name: Create GitHub release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ASSETS=()
-          for file in out/*.exe out/*.AppImage out/*.deb out/*.dmg out/*-Portable.zip out/lite/lite.json out/lite/*.asar; do
+          for file in out/*.exe out/*.msi out/*.AppImage out/*.deb out/*.dmg out/*-Portable.zip out/lite/lite.json out/lite/*.asar; do
             [ -f "$file" ] || continue
             ASSETS+=("$file")
           done

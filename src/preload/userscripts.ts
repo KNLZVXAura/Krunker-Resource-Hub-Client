@@ -132,6 +132,8 @@ function patternToRegex(pattern: string): RegExp {
 
 /** True when the script may run on this page. A script with no @match/@include runs everywhere, as before. */
 export function matchesPage(meta: ScriptMetadata, url: string = window.location.href): boolean {
+  // about:blank, data: and file: pages are never game pages (the parked hub window is about:blank): no script runs there
+  if (!/^https?:/i.test(url)) return false;
   const here = plainUrl(url);
   try {
     if (meta.exclude.some((p) => patternToRegex(p).test(here))) return false;
@@ -158,6 +160,15 @@ function executeScript(
   _console: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
 ): void {
   if (instance.executed) return;
+
+  // The same script must never run twice: a copy in the scripts folder (e.g. from the old "Example Userscripts" button) and the
+  // built-in one have the same @name. Scripts like Krunker Reconnector wrap WebSocket, and a second wrap throws on every game
+  // message ("Cannot redefine property: data"), so the game never finishes loading and the server closes the socket (code 1005).
+  const twin = instances.find((i) => i !== instance && i.executed && i.builtin !== instance.builtin && !!instance.meta.name && i.meta.name === instance.meta.name);
+  if (twin) {
+    _console.warn('[KRH] Userscript skipped, "' + instance.meta.name + '" already runs as ' + (twin.builtin ? 'a built-in script' : 'a script from the scripts folder') + ' (' + twin.filename + '). Switch off or delete the copy in the scripts folder.');
+    return;
+  }
   loadRequires(instance.meta, _console);
 
   const context: Record<string, unknown> = {

@@ -217,9 +217,9 @@ const BODY = `
     <button class="tile" data-open="play"><b>Play Krunker</b><span>Open or bring up the game window</span></button>
     <button class="tile" data-open="hub"><b>KRH Website</b><span>Resources, guides, maps and community posts</span></button>
     <button class="tile" data-go="settings"><b>Client settings</b><span>All KRH Client options, right here</span></button>
-    <button class="tile" data-link="https://github.com/krunkerresourcehub/krh-client/releases"><b>Releases</b><span>Download the newest KRH Client</span></button>
-    <button class="tile" data-link="https://github.com/krunkerresourcehub/krh-client/issues"><b>Report a problem</b><span>Open an issue on GitHub</span></button>
-    <button class="tile" data-link="https://github.com/krunkerresourcehub/krh-client"><b>Source code</b><span>KRH Client on GitHub</span></button>
+    <button class="tile" data-link="https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases"><b>Releases</b><span>Download the newest KRH Client</span></button>
+    <button class="tile" data-link="https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/issues"><b>Report a problem</b><span>Open an issue on GitHub</span></button>
+    <button class="tile" data-link="https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client"><b>Source code</b><span>KRH Client on GitHub</span></button>
    </div>
   </section>
   <section id="p-scripts" hidden>
@@ -284,7 +284,7 @@ const BODY = `
   </section>
   <section id="p-updates" hidden>
    <h1>What's new</h1><p class="sub" id="upSub"></p>
-   <div class="card"><div class="row"><button class="btn" id="upCheck">Check for updates</button><button class="btn ghost" data-link="https://github.com/krunkerresourcehub/krh-client/releases">Open releases</button><button class="btn ghost" id="upCopy" hidden>Copy report</button></div><p id="upNote" style="margin:10px 0 0"></p><pre id="upReport" hidden style="margin:10px 0 0;white-space:pre-wrap;font-size:12px;line-height:1.5;opacity:.9"></pre></div>
+   <div class="card"><div class="row"><button class="btn" id="upCheck">Check for updates</button><button class="btn ghost" data-link="https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases">Open releases</button><button class="btn ghost" id="upCopy" hidden>Copy report</button></div><p id="upNote" style="margin:10px 0 0"></p><pre id="upReport" hidden style="margin:10px 0 0;white-space:pre-wrap;font-size:12px;line-height:1.5;opacity:.9"></pre></div>
    <div class="card"><h2>Release notes for your version</h2><div class="md" id="upNotes">Loading...</div></div>
   </section>
   <section id="p-settings" hidden>

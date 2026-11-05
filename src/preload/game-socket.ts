@@ -15,25 +15,48 @@ export function onGameFrame(handler: GameFrameHandler): () => void {
   return () => { handlers.delete(handler); };
 }
 
-/** Wrap window.WebSocket once, at preload top level (before the game socket opens). */
+/** Wrap window.WebSocket once, at preload top level (before the game socket opens).
+ *
+ * The wrapper is a Proxy around the real constructor, not a subclass: `WebSocket.name`, `WebSocket.prototype`,
+ * `instanceof` and `toString()` all stay exactly as in a stock browser, so the game cannot tell it was wrapped
+ * (a subclass showed up as `HookedWebSocket` with its own source text). It only listens, it never changes a frame.
+ * Close and error events of the game socket are written to the log, so a "Lost Connection" can be traced. */
 export function installGameSocketTap(): void {
   if (installed) return;
   const OrigWS = window.WebSocket;
   if (!OrigWS) return;
   installed = true;
 
-  class HookedWebSocket extends OrigWS {
-    constructor(url: string | URL, protocols?: string | string[]) {
-      super(url, protocols);
+  const nativeToString = Function.prototype.toString;
+  const nativeSource = nativeToString.call(OrigWS);
+
+  const wrapped: typeof WebSocket = new Proxy(OrigWS, {
+    construct(target, args, newTarget) {
+      const ws = Reflect.construct(target, args, newTarget === wrapped ? target : newTarget) as WebSocket;
       try {
-        this.addEventListener('message', onMessage);
+        ws.addEventListener('message', onMessage);
+        const host = hostOf(args[0]);
+        ws.addEventListener('close', (ev: CloseEvent) => {
+          _console.warn(`[KRH-Socket] closed host=${host} code=${ev.code} reason="${ev.reason || ''}" clean=${ev.wasClean}`);
+        });
+        ws.addEventListener('error', () => { _console.warn(`[KRH-Socket] error host=${host}`); });
       } catch (err) {
         _console.warn('[KRH-Socket] listener attach failed:', err);
       }
-    }
-  }
-  (window as any).WebSocket = HookedWebSocket;
+      return ws;
+    },
+    get(target, prop, receiver) {
+      // toString of the Proxy would read "function () { [native code] }"; give back the real text
+      if (prop === 'toString') return () => nativeSource;
+      return Reflect.get(target, prop, target === receiver ? target : receiver);
+    },
+  });
+  (window as any).WebSocket = wrapped;
   _console.log('[KRH-Socket] game socket tap installed');
+}
+
+function hostOf(u: unknown): string {
+  try { return new URL(String(u)).hostname; } catch { return '?'; }
 }
 
 function onMessage(ev: MessageEvent): void {

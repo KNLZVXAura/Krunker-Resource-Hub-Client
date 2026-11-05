@@ -361,6 +361,15 @@ export interface AppConfig {
     /** The one-time "weak GPU detected, apply the Low-End preset?" question has been shown. */
     lowEndPrompted: boolean;
   };
+  /** Optional proxy for all traffic of the client (Settings > Performance > Proxy). The password is stored encrypted. */
+  network: {
+    proxyEnabled: boolean;
+    proxyType: 'socks5' | 'socks4' | 'http' | 'https';
+    proxyHost: string;
+    proxyPort: number;
+    proxyUser: string;
+    proxyPassEnc: string;
+  };
   accounts: SavedAccount[];
   tabWindow: {
     width: number;
@@ -602,6 +611,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     gpuProfile: 'auto',
     ignoreDisplayScaling: false,
     lowEndPrompted: false,
+  },
+  network: {
+    proxyEnabled: false,
+    proxyType: 'socks5',
+    proxyHost: '',
+    proxyPort: 1080,
+    proxyUser: '',
+    proxyPassEnc: '',
   },
   accounts: [],
   tabWindow: {

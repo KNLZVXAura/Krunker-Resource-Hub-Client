@@ -2,7 +2,6 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { electronLog } from './logger';
 import classRoulette from '../../assets/builtin-scripts/classRoulette.js?raw';
-import quickSell from '../../assets/builtin-scripts/quickSellByRarity.js?raw';
 import reconnector from '../../assets/builtin-scripts/Krunker_Reconnector.js?raw';
 import quickDocs from '../../assets/builtin-scripts/Quick_Krunker_Docs_Integration.js?raw';
 import killStreak from '../../assets/builtin-scripts/killstreak.js?raw';
@@ -21,7 +20,6 @@ export interface BuiltinScript {
 export const BUILTIN_SCRIPTS: BuiltinScript[] = [
   { filename: 'builtin-killStreak.js', content: killStreak },
   { filename: 'builtin-classRoulette.js', content: classRoulette },
-  { filename: 'builtin-quickSell.js', content: quickSell },
   { filename: 'builtin-reconnector.js', content: reconnector },
   { filename: 'builtin-quickDocs.js', content: quickDocs },
 ];

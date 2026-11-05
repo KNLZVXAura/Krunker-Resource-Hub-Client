@@ -1,26 +1,31 @@
 # KRH Client
 
-[![Downloads](https://img.shields.io/github/downloads/krunkerresourcehub/krh-client/total?style=flat&logo=github&label=Downloads)](https://github.com/krunkerresourcehub/krh-client/releases)
-[![Stars](https://img.shields.io/github/stars/krunkerresourcehub/krh-client?style=flat&logo=github&label=Stars)](https://github.com/krunkerresourcehub/krh-client/stargazers)
-[![Latest Release](https://img.shields.io/github/v/release/krunkerresourcehub/krh-client?style=flat&label=Latest)](https://github.com/krunkerresourcehub/krh-client/releases/latest)
-[![License](https://img.shields.io/github/license/krunkerresourcehub/krh-client?style=flat&label=License)](https://github.com/krunkerresourcehub/krh-client/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/KNLZVXAura/Krunker-Resource-Hub-Client/total?style=flat&logo=github&label=Downloads)](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases)
+[![Stars](https://img.shields.io/github/stars/KNLZVXAura/Krunker-Resource-Hub-Client?style=flat&logo=github&label=Stars)](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/stargazers)
+[![Latest Release](https://img.shields.io/github/v/release/KNLZVXAura/Krunker-Resource-Hub-Client?style=flat&label=Latest)](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases/latest)
+[![License](https://img.shields.io/github/license/KNLZVXAura/Krunker-Resource-Hub-Client?style=flat&label=License)](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/blob/main/LICENSE)
 
 <img src="assets/KRHPOSTER.webp" alt="KRH Client">
 
 KRH Client is the official client of the [Krunker Resource Hub](https://krunker-resources-hub.pages.dev/). It is a high-performance Krunker client that runs on a patched Electron build, and it is based on the [Krunker Civilian Client](https://github.com/bigjakk/krunker-civilian-client) (KCC).
 
-**Download:** [Windows (x64): Setup or Portable](https://github.com/krunkerresourcehub/krh-client/releases/latest) -
-[Linux (AppImage or .deb)](https://github.com/krunkerresourcehub/krh-client/releases/latest) -
+**Download:** [Windows (x64): Setup, MSI or Portable](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases/latest) -
+[Linux (AppImage or .deb)](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases/latest) -
 [Build for macOS](#building-from-source)
 
 | File | For |
 | --- | --- |
-| `KRH-Client-3.0.1-Windows-Setup.exe` | Windows 64-bit, installer |
-| `KRH-Client-3.0.1-Windows-Portable.exe` | Windows 64-bit, no installation |
-| `KRH-Client-3.0.1-Linux-Installer.deb` | Debian, Ubuntu, Mint |
-| `KRH-Client-3.0.1-Linux-Portable.AppImage` | Linux, run `chmod +x` first |
+| `KRH.Client-3.0.2-Setup.exe` | Windows 64-bit, installer |
+| `KRH.Client-3.0.2-Setup.msi` | Windows 64-bit, MSI installer (per-user or all users) |
+| `KRH.Client-3.0.2-Portable.exe` | Windows 64-bit, no installation |
+| `KRH.Client-3.0.2-linux-x64.deb` | Debian, Ubuntu, Mint |
+| `KRH.Client-3.0.2-linux-x64.AppImage` | Linux, run `chmod +x` first |
 
 The builds are not code-signed, so Windows SmartScreen may show an "Unknown publisher" warning on first launch. Check the SHA-256 checksums on the release page before running a download.
+
+**If the MSI does not open or install:** the builds are not code-signed. On "Windows protected your PC" click **More info > Run anyway**. If the file is blocked, right-click it > **Properties** > tick **Unblock** > **OK**. Error 1603 / 1618: close other installers or restart Windows, and uninstall an older KRH Client first. To get a log, run `msiexec /i "<file>.msi" /L*v install.log` in Command Prompt and send `install.log` in an issue. The `Setup.exe` and the Portable version work without MSI.
+
+**Proxy:** Settings > Performance > Proxy sends all traffic of the client through a SOCKS5 / SOCKS4 / HTTP / HTTPS proxy of your choice (optional login, password stored encrypted, restart needed). It is a proxy, not a VPN, and only affects this client.
 
 ## How it works
 
@@ -150,7 +155,7 @@ All of these are off by default unless noted. They are in Settings > Extras.
 - **Keep Friend Chat Drafts** (from Kute, on by default): the unsent text of a friend chat message is put back when Krunker clears the box
 - **End Message Per Account** (from Kute): Krunker's Match End Message is remembered for each account, so an alt never sends your main account's message
 - **Secure DNS (fixed)**: all lookups of the client use DNS-over-HTTPS, Cloudflare (1.1.1.1) first and Google (8.8.8.8) if Cloudflare fails. It is not a setting and there is no fallback to the DNS of your system or provider, so if both are blocked on your network the client cannot connect
-- **Built-in scripts** (3.0.1): Kill Streak (KRH, a +N pop-up for every kill in a row), Class Roulette and Quick Sell by Rarity (from Kute), Krunker Reconnector (Swat) and Quick Krunker Docs Integration (KNLZVX) are part of the client now, each with its own on/off switch in Settings > Userscripts (and the dashboard). They work even when the scripts folder is off, and they start switched off. Userscripts written for Tampermonkey work as they are: `unsafeWindow`, `GM_setClipboard`, `@match` / `@exclude` and `@require` of the bundled msgpack library are supported. A script can offer settings and an unload function with `this.settings` and `this.unload`, no `return this` needed
+- **Built-in scripts** (3.0.1): Kill Streak (KRH, a +N pop-up for every kill in a row), Class Roulette (from Kute), Krunker Reconnector (Swat) and Quick Krunker Docs Integration (KNLZVX) are part of the client now, each with its own on/off switch in Settings > Userscripts (and the dashboard). They work even when the scripts folder is off, and they start switched off. Userscripts written for Tampermonkey work as they are: `unsafeWindow`, `GM_setClipboard`, `@match` / `@exclude` and `@require` of the bundled msgpack library are supported. A script can offer settings and an unload function with `this.settings` and `this.unload`, no `return this` needed
 
 ### Inherited from KCC
 
@@ -251,7 +256,7 @@ Notes:
 
 ## Userscripts
 
-Settings > Userscripts lists the **Built-in Scripts** (Kill Streak, Class Roulette, Quick Sell by Rarity, Krunker Reconnector, Quick Krunker Docs Integration) with a switch each. They are part of the client, so they need no scripts folder and no install step. Quick Krunker Docs Integration runs in the map editor and the scripting window, the others in the game.
+Settings > Userscripts lists the **Built-in Scripts** (Kill Streak, Class Roulette, Krunker Reconnector, Quick Krunker Docs Integration) with a switch each. They are part of the client, so they need no scripts folder and no install step. Quick Krunker Docs Integration runs in the map editor and the scripting window, the others in the game.
 
 Any `.js` file in the scripts folder is loaded as a userscript if userscripts are enabled in the settings. Scripts support Tampermonkey-style metadata blocks (`@name`, `@author`, `@version`, `@desc`) and can define custom settings (boolean, number, select, color, keybind).
 
@@ -268,7 +273,7 @@ For details on the patch and on how to build it, see [Electron-Websocket-Fix](ht
 1. Install [git](https://git-scm.com/downloads), [Node.js](https://nodejs.org/) and npm
 2. Clone and install:
    ```bash
-   git clone https://github.com/krunkerresourcehub/krh-client.git
+   git clone https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client.git
    cd krh-client
    npm install
    ```
@@ -279,7 +284,7 @@ The macOS build needs a Mac. Without one you can build the DMG on GitHub: open t
 
 ## Feedback
 
-Found a bug or have an idea? [Open an issue](https://github.com/krunkerresourcehub/krh-client/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/issues).
 
 ## Credits
 
@@ -291,7 +296,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/krunkerresourceh
 - [WOK Client](https://github.com/Alx8g/wok-client) by Alx8g (GPL-3.0): the motion blur (code adapted for KRH Client) and the quick class picker (idea and styling)
 - [NM/NZ Client](https://github.com/nmallik1029/nm-nez-client) by nmallik1029 (GPL-3.0-or-later): updating without the installer, fast Escape, live accuracy, the frame-time HUD, sensitivity and FOV presets and friend / clan name colours (code adapted for KRH Client), plus Linux launcher and blocklist improvements
 - [krapio](https://github.com/NullDev/krapio) by NullDev (MIT): the documentation of Krunker's public game API, which the Live Data page uses (endpoint paths and fields only, no code copied)
-- [Kute](https://github.com/NullDev/Kute) by NullDev (GPL-3.0): the classic menu styling, friend chat drafts and per-account end message (adapted for KRH Client), the ranked match alert, video skin blocking and ranked match sound volume (ideas, written for KRH Client), the My Inventory scroll fix (ported), the motion blur saturation fix (idea), and the Class Roulette and Quick Sell by Rarity example userscripts (included unmodified, MIT headers kept). No Kute website or API is used (the Live Data page reads Krunker's own public game API, documented by krapio)
+- [Kute](https://github.com/NullDev/Kute) by NullDev (GPL-3.0): the classic menu styling, friend chat drafts and per-account end message (adapted for KRH Client), the ranked match alert, video skin blocking and ranked match sound volume (ideas, written for KRH Client), the My Inventory scroll fix (ported), the motion blur saturation fix (idea), and the Class Roulette example userscript (included unmodified, MIT header kept). No Kute website or API is used (the Live Data page reads Krunker's own public game API, documented by krapio)
 - [Crankshaft](https://github.com/KraXen72/crankshaft) by KraXen72: matchmaker and keystrokes overlay
 - [Glorp](https://github.com/slavcp/glorp) by slav: external ranked queue, plus several features reworked for KRH Client (CPU throttling, cleaner menu, selectable chat, custom blocklist and flags)
 - [Lombre_Blanche - Krunker Scripts](https://lombreblanche34.github.io/krunker_scripts/): author of the ranked leaderboard userscript that the leaderboard search feature is based on

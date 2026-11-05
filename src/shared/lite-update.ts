@@ -2,7 +2,7 @@
  * Adapted from NM/NZ Client (https://github.com/nmallik1029/nm-nez-client), src/shared/lite-update.ts.
  * NM/NZ Client is GPL-3.0-or-later, like KRH Client. See THIRD_PARTY_NOTICES.md.
  * Changes: only app.asar is shipped (no "extra" archive, KRH has nothing beside it), 4-part versions,
- * and the release repository is krunkerresourcehub/krh-client.
+ * and the release repository is KNLZVXAura/Krunker-Resource-Hub-Client.
  */
 
 /**

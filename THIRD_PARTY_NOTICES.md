@@ -57,8 +57,8 @@ Used for:
 - `src/preload/chat-draft.ts`: adapted from `chatDraft.js`, rewritten in TypeScript and made switchable at runtime.
 - `src/preload/end-message.ts`: adapted from `accountEndMessage.js`, rewritten in TypeScript; the messages are stored by
   KRH Client's main process instead of Kute's host bridge.
-- `assets/builtin-scripts/classRoulette.js` and `quickSellByRarity.js`: included **unmodified**. Their headers
-  name MIT as their license (authors: Kute / aashten). They are also covered by Kute's GPL-3.0 repository license.
+- `assets/builtin-scripts/classRoulette.js`: included **unmodified**. Its header
+  names MIT as its license (author: Kute). It is also covered by Kute's GPL-3.0 repository license.
 - Ideas only, written for KRH Client: Ranked Match Alert (`src/preload/ranked-alert.ts`, `krh-ranked-found` in the
   main process) and Disable Video Skins (a request filter in the main process).
 

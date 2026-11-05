@@ -803,6 +803,8 @@ export function buildPerformanceSection(
     buttons: [{ icon: 'folder', label: 'Open Folder', title: 'Open Folder', onClick: () => ipcRenderer.invoke('open-user-lists-folder') }],
   }).row);
 
+  buildProxyGroup(body);
+
   const debugGroup = createGroup(body, 'Debugging');
 
   debugGroup.appendChild(createToggleRow({
@@ -814,6 +816,84 @@ export function buildPerformanceSection(
       setVerbose(v);
     },
   }));
+}
+
+/** Proxy for all traffic of the client (changes the IP the servers see). Saved through its own calls, the password never comes back to the page. */
+function buildProxyGroup(body: HTMLElement): void {
+  const group = createGroup(body, 'Proxy');
+  const st = { enabled: false, type: 'socks5', host: '', port: '1080', user: '', pass: '' };
+  const save = (): void => {
+    ipcRenderer.invoke('proxy-set', { enabled: st.enabled, type: st.type, host: st.host, port: Number(st.port), user: st.user, pass: st.pass })
+      .then((r: { ok: boolean; error?: string }) => { if (r && !r.ok) showToast(r.error || 'The proxy was not saved'); })
+      .catch(() => showToast('The proxy was not saved'));
+  };
+
+  const toggle = createToggleRow({
+    label: 'Use a Proxy',
+    desc: 'Sends all traffic of the client (game, website, updates) through the proxy below, so servers see the proxy\'s IP address instead of yours. This is a proxy, not a VPN: only this client is affected. It usually adds ping, and the proxy owner can see your traffic, so only use one you trust. Needs a restart',
+    checked: false, restart: true,
+    onChange: (v) => { st.enabled = v; save(); },
+  });
+  group.appendChild(toggle);
+
+  const typeRow = createSelectRow({
+    label: 'Proxy Type',
+    desc: 'SOCKS5 works for most proxies. Use HTTP / HTTPS only if your provider says so',
+    options: [
+      { value: 'socks5', label: 'SOCKS5' },
+      { value: 'socks4', label: 'SOCKS4' },
+      { value: 'http', label: 'HTTP' },
+      { value: 'https', label: 'HTTPS' },
+    ],
+    value: 'socks5', restart: true,
+    onChange: (v) => { st.type = v; save(); },
+  });
+  group.appendChild(typeRow);
+
+  const host = createTextRow({
+    label: 'Proxy Host', desc: 'Address of the proxy server, for example 203.0.113.10 or proxy.example.com',
+    value: '', placeholder: 'host or IP', restart: true,
+    onChange: (v) => { st.host = v; save(); },
+  });
+  group.appendChild(host.row);
+
+  const port = createTextRow({
+    label: 'Proxy Port', desc: 'Port of the proxy, 1 to 65535 (SOCKS usually 1080, HTTP often 8080)',
+    value: '1080', placeholder: '1080', restart: true,
+    onChange: (v) => { st.port = v; save(); },
+  });
+  group.appendChild(port.row);
+
+  const user = createTextRow({
+    label: 'Proxy Username', desc: 'Leave empty when the proxy needs no login',
+    value: '', placeholder: 'optional', restart: true,
+    onChange: (v) => { st.user = v; save(); },
+  });
+  group.appendChild(user.row);
+
+  const pass = createTextRow({
+    label: 'Proxy Password', desc: 'Saved encrypted on this computer and never shown again. Leave empty to keep the saved one',
+    value: '', placeholder: 'optional', restart: true,
+    onChange: (v) => { st.pass = v; save(); st.pass = ''; pass.input.value = ''; pass.input.placeholder = v ? 'saved (hidden)' : pass.input.placeholder; },
+  });
+  pass.input.type = 'password';
+  pass.input.autocomplete = 'off';
+  group.appendChild(pass.row);
+
+  // Fill the rows with what is saved (the password itself is never sent back)
+  ipcRenderer.invoke('proxy-get').then((r: { enabled: boolean; type: string; host: string; port: number; user: string; hasPass: boolean; canSavePass: boolean }) => {
+    if (!r) return;
+    st.enabled = r.enabled; st.type = r.type; st.host = r.host; st.port = String(r.port); st.user = r.user;
+    const cb = toggle.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    if (cb) cb.checked = r.enabled;
+    const sel = typeRow.querySelector('select') as HTMLSelectElement | null;
+    if (sel) sel.value = r.type;
+    host.input.value = r.host;
+    port.input.value = String(r.port);
+    user.input.value = r.user;
+    if (r.hasPass) pass.input.placeholder = 'saved (hidden)';
+    if (!r.canSavePass) pass.input.placeholder = 'cannot be saved on this computer';
+  }).catch(() => { /* old build without the call: the rows stay empty */ });
 }
 
 export function buildSwapperSection(body: HTMLElement, swapperConf: any, uiConfRaw: any): void {

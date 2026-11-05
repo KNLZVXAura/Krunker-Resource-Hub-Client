@@ -71,7 +71,7 @@ function slugify(name: string): string {
 }
 
 function cleanName(name: string): string {
-  const n = name.replace(/\.zip$/i, '').replace(/[\u0000-\u001f<>:"/\\|?*]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const n = name.replace(/\.zip$/i, '').replace(/[\p{Cc}<>:"/\\|?*]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
   return n || 'Pack';
 }
 
@@ -280,7 +280,7 @@ async function downloadToTemp(url: string): Promise<string> {
 }
 
 export async function installPackFromUrl(swapDir: string, url: string): Promise<InstallResult> {
-  let nameFromUrl = 'Pack';
+  let nameFromUrl: string;
   try {
     const u = new URL(url);
     nameFromUrl = decodeURIComponent(posix.basename(u.pathname)) || 'Pack';
@@ -300,7 +300,7 @@ export async function installPackFromUrl(swapDir: string, url: string): Promise<
 export function listPacks(swapDir: string): PackMeta[] {
   const root = packsRoot(swapDir);
   const out: PackMeta[] = [];
-  let names: string[] = [];
+  let names: string[];
   try { names = readdirSync(root); } catch { return out; }
   for (const id of names) {
     if (!PACK_ID_RE.test(id)) continue;

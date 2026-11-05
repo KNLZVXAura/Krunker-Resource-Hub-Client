@@ -6,10 +6,6 @@
 // @run-at       document-end
 // ==/UserScript==
 
-// shipped with KRH Client as an example userscript. It reads Krunker's own kill feed (#chatList), so nothing is injected into the game.
-// `this.unload` is called when the script is switched off live: it stops the observer and timers and removes the pop-up.
-const __kcSelf = this;
-
 (function () {
     'use strict';
 
@@ -34,8 +30,6 @@ const __kcSelf = this;
     let gameKey = null;
     let observedList = null;
     let observer = null;
-    const timers = [];
-    const listeners = [];
     const seen = new WeakSet();
 
     const log = (...a) => CONFIG.debug && console.log('[KillStreak]', ...a);
@@ -286,35 +280,18 @@ const __kcSelf = this;
         ensureElements();
         updateVisibility();
         document.addEventListener('pointerlockchange', updateVisibility);
-        listeners.push([document, 'pointerlockchange', updateVisibility]);
-        timers.push(setInterval(updateVisibility, 500));
+        setInterval(updateVisibility, 500);
         gameKey = currentGameKey();
         watchChatList();
-        timers.push(setInterval(() => {
+        setInterval(() => {
             watchChatList(); // re-attach if Krunker rebuilds the chat list
             checkGameChange();
-        }, 1000));
-        const onUrl = () => resetStreak('url change');
-        window.addEventListener('hashchange', onUrl);
-        window.addEventListener('popstate', onUrl);
-        listeners.push([window, 'hashchange', onUrl], [window, 'popstate', onUrl]);
+        }, 1000);
+        window.addEventListener('hashchange', () => resetStreak('url change'));
+        window.addEventListener('popstate', () => resetStreak('url change'));
         // manual access from the dev console: kcStreak.reset(), kcStreak.get()
         window.kcStreak = { reset: () => resetStreak('manual'), get: () => streak };
     }
-
-    // called by the client when the script is switched off: undo everything init() set up
-    __kcSelf.unload = function () {
-        timers.forEach(clearInterval);
-        listeners.forEach(([t, e, f]) => t.removeEventListener(e, f));
-        if (observer) observer.disconnect();
-        observer = null;
-        observedList = null;
-        streak = 0;
-        ['kcs-popup', 'kcs-badge', 'kcs-style'].forEach((id) => { const el = document.getElementById(id); if (el) el.remove(); });
-        if (document.body) document.body.classList.remove('kcs-ingame');
-        delete window.kcStreak;
-        window.__kcKillStreakLoaded = false;
-    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
@@ -322,6 +299,3 @@ const __kcSelf = this;
         init();
     }
 })();
-
-// the client keeps `this.unload` only when the script returns `this`
-return this;

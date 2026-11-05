@@ -87,7 +87,23 @@ export function resolveGpuProfile(setting: unknown, summary: GpuSummary): { sett
   return { setting: s, effective: tier === 'legacy' ? 'legacy' : tier === 'low' ? 'low' : 'standard' };
 }
 
-export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['advanced'], performance: AppConfig['performance']): void {
+/** Chromium's value for --proxy-server, or null when no valid proxy is set (host and port are checked here too). */
+export function proxyRules(n: Partial<AppConfig['network']> | undefined): string | null {
+  if (!n || n.proxyEnabled !== true) return null;
+  const host = String(n.proxyHost || '').trim();
+  const port = Number(n.proxyPort);
+  const type = ['socks5', 'socks4', 'http', 'https'].includes(String(n.proxyType)) ? String(n.proxyType) : 'socks5';
+  if (!host || !/^[A-Za-z0-9.-]+$|^\[[0-9A-Fa-f:]+\]$/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return `${type}://${host}:${port}`;
+}
+
+export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['advanced'], performance: AppConfig['performance'], network?: Partial<AppConfig['network']>): void {
+  // Proxy: one switch for every window and tab of the client. Changing it needs a restart.
+  const proxy = proxyRules(network);
+  if (proxy) {
+    app.commandLine.appendSwitch('proxy-server', proxy);
+    app.commandLine.appendSwitch('proxy-bypass-list', 'localhost;127.0.0.1;<local>');
+  }
   // Chromium's CommandLine stores ONE value per switch name — every
   // `appendSwitch('enable-features', X)` call overwrites the previous one.
   // Accumulate into Sets and emit a single combined value at the end.
@@ -227,8 +243,8 @@ export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['adva
   // ── Extra performance tweaks ──
   // Force-past-safety switches: GPU rasterization past the driver blocklist,
   // driver bug workarounds off, no software-rasterizer fallback, discrete GPU
-  // on dual-GPU machines, 1ms Windows timer frequency, no best-effort task
-  // deferral, and no proxy resolution (breaks proxied setups).
+  // on dual-GPU machines, 1ms Windows timer frequency,
+  // and no proxy resolution (breaks proxied setups).
   if (advanced.perfTweaks) {
     if (gpuProfile !== 'legacy') app.commandLine.appendSwitch('enable-gpu-rasterization');
     // Keep Chromium's driver-bug workarounds ON for mac: disabling them makes
@@ -240,8 +256,7 @@ export function applyPlatformFlags(info: PlatformInfo, advanced: AppConfig['adva
     if (forceSwitchesOk) app.commandLine.appendSwitch('disable-software-rasterizer');
     app.commandLine.appendSwitch('force-high-performance-gpu');
     app.commandLine.appendSwitch('raise-timer-frequency');
-    app.commandLine.appendSwitch('disable-best-effort-tasks');
-    app.commandLine.appendSwitch('no-proxy-server');
+    if (!proxy) app.commandLine.appendSwitch('no-proxy-server');
   }
 
   // ── Single emission of accumulated feature flag sets ──

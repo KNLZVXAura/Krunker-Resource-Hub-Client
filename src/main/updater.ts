@@ -40,13 +40,13 @@ interface GithubRelease {
   assets: GithubAsset[];
 }
 
-// Update checks read the latest GitHub release of the repository configured below (krunkerresourcehub/krh-client).
+// Update checks read the latest GitHub release of the repository configured below (KNLZVXAura/Krunker-Resource-Hub-Client).
 // Releases need a vX.Y.Z tag and a '...Setup.exe' asset for the Windows self-update.
 const UPDATES_ENABLED = true;
 
 const UPDATE_CONFIG = {
-  checkUrl: 'https://api.github.com/repos/krunkerresourcehub/krh-client/releases/latest',
-  releasesUrl: 'https://github.com/krunkerresourcehub/krh-client/releases/latest',
+  checkUrl: 'https://api.github.com/repos/KNLZVXAura/Krunker-Resource-Hub-Client/releases/latest',
+  releasesUrl: 'https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases/latest',
   allowedHosts: ['github.com', 'githubusercontent.com'],
 };
 
@@ -185,7 +185,7 @@ async function getLatestRelease(currentVersion: string): Promise<GithubRelease |
   const tag = await fetchLatestTag(currentVersion);
   if (!tag) return null;
   electronLog.warn('[KRH-Update] GitHub API unavailable; using the release page instead:', tag);
-  return { tag_name: 'v' + tag, html_url: `https://github.com/krunkerresourcehub/krh-client/releases/tag/v${tag}`, assets: [] };
+  return { tag_name: 'v' + tag, html_url: `https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases/tag/v${tag}`, assets: [] };
 }
 
 export async function checkForUpdate(currentVersion: string): Promise<UpdateInfo | null> {

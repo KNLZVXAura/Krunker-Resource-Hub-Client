@@ -5,7 +5,7 @@ import { get as httpsGet } from 'https';
 import { execFile } from 'child_process';
 import * as os from 'os';
 import { Socket } from 'net';
-import { detectPlatform, applyPlatformFlags, getValidAngleBackends, devWindowIcon, clampFrameCap, ensureHighPerformanceGpu, getGpuProfileInfo, GPU_PROFILES } from './platform';
+import { detectPlatform, applyPlatformFlags, proxyRules, getValidAngleBackends, devWindowIcon, clampFrameCap, ensureHighPerformanceGpu, getGpuProfileInfo, GPU_PROFILES } from './platform';
 import type { ExtrasConfig } from './config-defaults';
 import { config, Keybind, DEFAULT_KEYBINDS, SavedAccount, DEFAULT_CONFIG, SocialMusicSource } from './config';
 import { initSwapperProtocol, registerSwapperFileProtocol, ResourceSwapper, filePathToSwapURL, EXTERNAL_SWAP_FILE, EXTERNAL_EXAMPLE } from './swapper';
@@ -250,7 +250,20 @@ if (advancedConfig.angleBackend && !validBackends.includes(advancedConfig.angleB
 // The KRH Official theme was dropped before release; anyone who tried a test build goes back to no theme
 if (config.get('ui')?.cssTheme === 'preset:krh-official') config.set('ui', { ...DEFAULT_CONFIG.ui, ...config.get('ui'), cssTheme: 'disabled' });
 
-applyPlatformFlags(platformInfo, advancedConfig, perfConfig);
+const networkConfig = { ...DEFAULT_CONFIG.network, ...config.get('network') };
+applyPlatformFlags(platformInfo, advancedConfig, perfConfig, networkConfig);
+if (proxyRules(networkConfig)) electronLog.log(`[KRH] Proxy: ${networkConfig.proxyType}://${networkConfig.proxyHost}:${networkConfig.proxyPort}${networkConfig.proxyUser ? ' (with login)' : ''}`);
+
+// Login for the proxy (the password is kept encrypted, see proxy-set)
+app.on('login', (event, _wc, _request, authInfo, callback) => {
+  if (!authInfo.isProxy) return;
+  const n = { ...DEFAULT_CONFIG.network, ...config.get('network') };
+  if (!proxyRules(n) || !n.proxyUser) return;
+  event.preventDefault();
+  let pass = '';
+  try { if (n.proxyPassEnc && safeStorage.isEncryptionAvailable()) pass = safeStorage.decryptString(Buffer.from(n.proxyPassEnc, 'base64')); } catch { /* wrong key: try without a password */ }
+  callback(n.proxyUser, pass);
+});
 if (config.get('performance')?.highPerformanceGpu !== false) ensureHighPerformanceGpu();
 {
   const g = getGpuProfileInfo();
@@ -430,16 +443,19 @@ document.addEventListener('keydown', function(e) {
 }, true);`;
 
 // ── Open issue count ──
-const ISSUE_COUNT_URL = 'https://api.github.com/search/issues?q=repo:krunkerresourcehub/krh-client+is:issue+is:open&per_page=1';
+// The repository was renamed/moved (GitHub answers api.github.com/repos/<old name> with a 301), and the search API
+// does not follow that redirect: a search for repo:<old name> answers 422. So the repository is looked up by its
+// numeric id (never changes), and its current full_name is used for the search.
+const REPO_ID_URL = 'https://api.github.com/repositories/1400469671';
 const ISSUE_COUNT_TTL = 10 * 60 * 1000;
 const ISSUE_COUNT_TIMEOUT_MS = 5000;
 let issueCount: { value: Promise<number | null>; at: number } | null = null;
 
-function fetchIssueCount(): Promise<number | null> {
+function githubJson(url: string): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
-    const req = httpsGet(ISSUE_COUNT_URL, { headers: { 'User-Agent': 'KRH' } }, (res) => {
+    const req = httpsGet(url, { headers: { 'User-Agent': 'KRH' } }, (res) => {
       if (res.statusCode !== 200) {
-        electronLog.warn('[KRH] Issue count returned status', res.statusCode);
+        electronLog.warn('[KRH] Issue count returned status', res.statusCode, new URL(url).pathname);
         res.resume();
         resolve(null);
         return;
@@ -448,25 +464,30 @@ function fetchIssueCount(): Promise<number | null> {
       let body = '';
       res.on('data', (chunk: string) => { body += chunk; });
       res.on('end', () => {
-        try {
-          const total = JSON.parse(body).total_count;
-          resolve(typeof total === 'number' ? total : null);
-        } catch (err) {
+        try { resolve(JSON.parse(body) as Record<string, unknown>); } catch (err) {
           electronLog.warn('[KRH] Issue count parse failed:', err);
           resolve(null);
         }
       });
       res.on('error', () => resolve(null));
     });
-    req.setTimeout(ISSUE_COUNT_TIMEOUT_MS, () => {
-      req.destroy();
-      resolve(null);
-    });
+    req.setTimeout(ISSUE_COUNT_TIMEOUT_MS, () => { req.destroy(); resolve(null); });
     req.on('error', (err) => {
       electronLog.warn('[KRH] Issue count fetch failed:', err);
       resolve(null);
     });
   });
+}
+
+async function fetchIssueCount(): Promise<number | null> {
+  const repo = await githubJson(REPO_ID_URL);
+  const fullName = typeof repo?.full_name === 'string' && /^[\w.-]+\/[\w.-]+$/.test(repo.full_name) ? repo.full_name : null;
+  if (!fullName) return null;
+  const found = await githubJson(`https://api.github.com/search/issues?q=repo:${fullName}+is:issue+is:open&per_page=1`);
+  const total = found?.total_count;
+  if (typeof total === 'number') return total;
+  // search failed (rate limit): open_issues_count of the repository also counts open pull requests, still better than nothing
+  return typeof repo?.open_issues_count === 'number' ? repo.open_issues_count : null;
 }
 
 // The unauthenticated search limit is tight, so cache the promise itself: dedupes concurrent renders and holds a failure for the TTL.
@@ -811,6 +832,16 @@ async function launchApp(): Promise<void> {
     } catch { /* invalid URL — fall through to cancel */ }
     // Matched an ad-block pattern — cancel it
     callback({ cancel: true });
+  });
+
+  // Network errors of the game (a failed game-server WebSocket, a blocked host, DNS failure) go to the log,
+  // so a "Lost Connection" screen can be traced to its cause (ERR_NAME_NOT_RESOLVED, ERR_CONNECTION_*, ...).
+  ses.webRequest.onErrorOccurred({ urls: ['*://*.krunker.io/*', 'wss://*.krunker.io/*'] }, (details) => {
+    if (details.resourceType !== 'webSocket' && details.resourceType !== 'mainFrame') return;
+    try {
+      const u = new URL(details.url);
+      electronLog.warn(`[KRH-Net] ${details.resourceType} ${u.hostname} failed: ${details.error}`);
+    } catch { /* invalid URL — ignore */ }
   });
 
   if (swapper) {
@@ -2120,6 +2151,30 @@ async function launchApp(): Promise<void> {
   if (hub.webContents.isLoading()) hub.webContents.once('did-finish-load', scheduleLowEndSuggestion);
   else scheduleLowEndSuggestion();
 
+  // Proxy settings: own calls, so the page scripts of the game can never read the saved password
+  ipcMain.handle('proxy-get', () => {
+    const n = { ...DEFAULT_CONFIG.network, ...config.get('network') };
+    return { enabled: n.proxyEnabled, type: n.proxyType, host: n.proxyHost, port: n.proxyPort, user: n.proxyUser, hasPass: !!n.proxyPassEnc, canSavePass: safeStorage.isEncryptionAvailable() };
+  });
+  ipcMain.handle('proxy-set', (_e, v: unknown) => {
+    const x = (v ?? {}) as Record<string, unknown>;
+    const prev = { ...DEFAULT_CONFIG.network, ...config.get('network') };
+    const type = ['socks5', 'socks4', 'http', 'https'].includes(String(x.type)) ? (x.type as 'socks5') : 'socks5';
+    const host = String(x.host ?? '').trim().slice(0, 255);
+    const port = Math.round(Number(x.port)) || 0;
+    const user = String(x.user ?? '').slice(0, 128);
+    let passEnc = prev.proxyPassEnc;
+    if (!user) passEnc = '';
+    else if (typeof x.pass === 'string' && x.pass !== '') {
+      if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'This computer cannot encrypt the password, so it is not saved' };
+      passEnc = safeStorage.encryptString(x.pass.slice(0, 256)).toString('base64');
+    }
+    const next = { proxyEnabled: x.enabled === true, proxyType: type, proxyHost: host, proxyPort: port >= 1 && port <= 65535 ? port : prev.proxyPort, proxyUser: user, proxyPassEnc: passEnc };
+    if (next.proxyEnabled && !proxyRules(next)) return { ok: false, error: 'Fill in a valid host and a port from 1 to 65535' };
+    config.set('network', next);
+    return { ok: true };
+  });
+
   ipcMain.handle('set-config', (_e, key: string, value: unknown) => {
     if (!ALLOWED_CONFIG_KEYS.has(key)) return;
     value = keepFolderPath(key, value);
@@ -2604,7 +2659,7 @@ async function launchApp(): Promise<void> {
     const tag = version.startsWith('v') ? version : `v${version}`;
     try {
       const data = await new Promise<string>((resolve, reject) => {
-        httpsGet(`https://api.github.com/repos/krunkerresourcehub/krh-client/releases/tags/${tag}`, { headers: { 'User-Agent': 'KRH' } }, (res) => {
+        httpsGet(`https://api.github.com/repos/KNLZVXAura/Krunker-Resource-Hub-Client/releases/tags/${tag}`, { headers: { 'User-Agent': 'KRH' } }, (res) => {
           let body = '';
           res.on('data', (chunk: string) => { body += chunk; });
           res.on('end', () => resolve(body));

@@ -4,7 +4,7 @@ productName: KRH Client
 # real 4-part release version is injected into the packaged app here. app.getVersion(), the
 # installer filenames and the Windows file/product version all come from this value.
 extraMetadata:
-  version: 3.0.1
+  version: 3.0.2
 directories:
   output: out
   buildResources: build
@@ -61,6 +61,17 @@ nsis:
   createDesktopShortcut: false   # build/installer.nsh adds a "Create a desktop shortcut" checkbox and creates it
   createStartMenuShortcut: false   # same: build/installer.nsh adds the checkbox and creates it
   shortcutName: KRH Client
+  artifactName: "${productName}-${version}-Setup.${ext}"
+
+# Windows Installer (.msi) for IT / group-policy / winget style installs. Built by its own CI job on a Windows
+# runner (electron-builder drives WiX there): npx electron-builder --win msi --x64
+msi:
+  oneClick: false              # shows the install wizard (per-user or all users, folder choice)
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: KRH Client
+  runAfterFinish: false
   artifactName: "${productName}-${version}-Setup.${ext}"
 
 portable:
