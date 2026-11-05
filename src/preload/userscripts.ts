@@ -38,6 +38,8 @@ export interface UserscriptInstance {
   executed: boolean;
   unload: (() => void) | null;
   settings: Record<string, UserscriptSetting> | null;
+  /** Shipped inside the app (switch kept by the main process, not by tracker.json). */
+  builtin?: boolean;
 }
 
 // ── State ──
@@ -187,21 +189,17 @@ function executeScript(
     const fn = new Function('unsafeWindow', 'GM_setClipboard', wrapped);
     const result = fn.apply(context, [window, gmSetClipboard]);
 
-    // Script returned `this` — capture settings and unload
-    if (result === context) {
-      instance.unload = (typeof context.unload === 'function') ? context.unload as () => void : null;
-      instance.settings = context.settings as Record<string, UserscriptSetting> | null;
-    } else {
-      instance.unload = null;
-      instance.settings = null;
-    }
+    // A script offers settings / unload by setting this.settings / this.unload; it does not have to `return this` for that
+    instance.unload = (typeof context.unload === 'function') ? context.unload as () => void : null;
+    instance.settings = (context.settings && typeof context.settings === 'object') ? context.settings as Record<string, UserscriptSetting> : null;
+    void result;
 
     instance.executed = true;
     _console.log('[KRH] Userscript executed:', instance.meta.name || instance.filename);
   } catch (err) {
     _console.error('[KRH] Userscript error in', instance.filename, ':', err);
     // The main process counts repeated failures (a script that throws on every start gets switched off).
-    try { ipcRenderer.send('userscript-error', instance.filename, String(err instanceof Error ? err.message : err).slice(0, 200)); } catch { /* ignore */ }
+    try { ipcRenderer.send(instance.builtin ? 'builtin-script-error' : 'userscript-error', instance.filename, String(err instanceof Error ? err.message : err).slice(0, 200)); } catch { /* ignore */ }
   }
 }
 
@@ -291,9 +289,13 @@ export function setScriptEnabled(
   inst.enabled = enabled;
 
   // Update tracker
-  const tracker: Record<string, boolean> = {};
-  for (const i of instances) tracker[i.filename] = i.enabled;
-  ipcRenderer.invoke('userscripts-set-tracker', tracker);
+  if (inst.builtin) {
+    void ipcRenderer.invoke('builtin-scripts-set', inst.filename, enabled);
+  } else {
+    const tracker: Record<string, boolean> = {};
+    for (const i of instances) if (!i.builtin) tracker[i.filename] = i.enabled;
+    ipcRenderer.invoke('userscripts-set-tracker', tracker);
+  }
 
   if (!enabled) {
     if (inst.unload && inst.executed) {
@@ -319,4 +321,45 @@ export function setScriptEnabled(
     }
     return { needsReload: false };
   }
+}
+
+// ── Built-in scripts (shipped with the client) ──
+
+let builtinListener = false;
+/** Built-in scripts for the editor / scripting windows (everything else belongs to the game window). */
+const TAB_SCRIPTS = new Set(['builtin-quickDocs.js']);
+
+/**
+ * Start the scripts that ship with the client and are switched on. `tabPage` is for the editor / scripting windows:
+ * only the scripts made for those pages run there, never the game-only ones.
+ */
+export async function initBuiltins(
+  _console: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+  tabPage = false,
+): Promise<void> {
+  let list: { filename: string; content: string; enabled: boolean }[];
+  try { list = await ipcRenderer.invoke('builtin-scripts-scan'); } catch (err) { _console.warn('[KRH] Built-in scripts unavailable:', err); return; }
+  if (!Array.isArray(list)) return;
+
+  if (!builtinListener) {
+    builtinListener = true;
+    // Switched from the dashboard (or another window): apply it here without a restart
+    ipcRenderer.on('builtin-scripts-changed', (_e, filename: unknown, enabled: unknown) => {
+      const inst = instances.find((i) => i.builtin && i.filename === filename);
+      if (inst && typeof enabled === 'boolean' && inst.enabled !== enabled) setScriptEnabled(inst.filename, enabled, _console);
+    });
+  }
+
+  for (const s of list) {
+    if (instances.some((i) => i.filename === s.filename)) continue;
+    const meta = parseMetadata(s.content);
+    if (tabPage !== TAB_SCRIPTS.has(s.filename)) continue; // editor/scripting pages run only the scripts made for them, the game window never runs those
+    instances.push({ filename: s.filename, content: s.content, meta, enabled: s.enabled === true, executed: false, unload: null, settings: null, builtin: true });
+  }
+  for (const inst of instances) {
+    if (!inst.builtin || !inst.enabled || inst.executed || !matchesPage(inst.meta)) continue;
+    executeScript(inst, _console);
+    await applyPreferences(inst);
+  }
+  _console.log('[KRH] Built-in scripts started:', instances.filter((i) => i.builtin && i.executed).map((i) => i.meta.name || i.filename).join(', ') || 'none switched on');
 }

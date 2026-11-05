@@ -57,7 +57,7 @@ Used for:
 - `src/preload/chat-draft.ts`: adapted from `chatDraft.js`, rewritten in TypeScript and made switchable at runtime.
 - `src/preload/end-message.ts`: adapted from `accountEndMessage.js`, rewritten in TypeScript; the messages are stored by
   KRH Client's main process instead of Kute's host bridge.
-- `assets/example-userscripts/classRoulette.js` and `quickSellByRarity.js`: included **unmodified**. Their headers
+- `assets/builtin-scripts/classRoulette.js` and `quickSellByRarity.js`: included **unmodified**. Their headers
   name MIT as their license (authors: Kute / aashten). They are also covered by Kute's GPL-3.0 repository license.
 - Ideas only, written for KRH Client: Ranked Match Alert (`src/preload/ranked-alert.ts`, `krh-ranked-found` in the
   main process) and Disable Video Skins (a request filter in the main process).
@@ -106,8 +106,8 @@ Used for: `assets/userscript-libs/msgpack-lite-0.1.26.min.js`, the library the K
 
 ## Example userscripts and ideas from the Krunker community
 
-- `assets/example-userscripts/Krunker_Reconnector.js`: by Swat, included **unmodified** as supplied. No license is stated in the file.
-- `assets/example-userscripts/Quick_Krunker_Docs_Integration.js`: by KNLZVX, included **unmodified** as supplied. No license is stated in the file.
+- `assets/builtin-scripts/Krunker_Reconnector.js`: by Swat, included **unmodified** as supplied. No license is stated in the file.
+- `assets/builtin-scripts/Quick_Krunker_Docs_Integration.js`: by KNLZVX, included **unmodified** as supplied. No license is stated in the file.
 - Server List Filter: the idea and the default word list come from j4k0xb's Krunker Serverlist Filter (https://github.com/j4k0xb/Krunker-Serverlist-Filter); the code in `src/shared/server-filter.ts` and `src/preload/serverlist-filter.ts` is written for this client.
 - Separate Game Loop: the idea is KNLZVX's (input and game updates on their own timer, drawing once per frame); the code in `src/preload/game-loop.ts` is written for this client.
 

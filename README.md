@@ -15,10 +15,10 @@ KRH Client is the official client of the [Krunker Resource Hub](https://krunker-
 
 | File | For |
 | --- | --- |
-| `KRH-Client-3.0.0-Windows-Setup.exe` | Windows 64-bit, installer |
-| `KRH-Client-3.0.0-Windows-Portable.exe` | Windows 64-bit, no installation |
-| `KRH-Client-3.0.0-Linux-Installer.deb` | Debian, Ubuntu, Mint |
-| `KRH-Client-3.0.0-Linux-Portable.AppImage` | Linux, run `chmod +x` first |
+| `KRH-Client-3.0.1-Windows-Setup.exe` | Windows 64-bit, installer |
+| `KRH-Client-3.0.1-Windows-Portable.exe` | Windows 64-bit, no installation |
+| `KRH-Client-3.0.1-Linux-Installer.deb` | Debian, Ubuntu, Mint |
+| `KRH-Client-3.0.1-Linux-Portable.AppImage` | Linux, run `chmod +x` first |
 
 The builds are not code-signed, so Windows SmartScreen may show an "Unknown publisher" warning on first launch. Check the SHA-256 checksums on the release page before running a download.
 
@@ -150,7 +150,7 @@ All of these are off by default unless noted. They are in Settings > Extras.
 - **Keep Friend Chat Drafts** (from Kute, on by default): the unsent text of a friend chat message is put back when Krunker clears the box
 - **End Message Per Account** (from Kute): Krunker's Match End Message is remembered for each account, so an alt never sends your main account's message
 - **Secure DNS (fixed)**: all lookups of the client use DNS-over-HTTPS, Cloudflare (1.1.1.1) first and Google (8.8.8.8) if Cloudflare fails. It is not a setting and there is no fallback to the DNS of your system or provider, so if both are blocked on your network the client cannot connect
-- **Example userscripts**: Class Roulette and Quick Sell by Rarity (from Kute), Krunker Reconnector (Swat), Quick Krunker Docs Integration (KNLZVX) and Kill Streak (KRH, a +N pop-up for every kill in a row), installed with one button in Settings > Userscripts. Userscripts written for Tampermonkey now work as they are: `unsafeWindow`, `GM_setClipboard`, `@match` / `@exclude` and `@require` of the bundled msgpack library are supported. They start switched off and are never copied over an existing file
+- **Built-in scripts** (3.0.1): Kill Streak (KRH, a +N pop-up for every kill in a row), Class Roulette and Quick Sell by Rarity (from Kute), Krunker Reconnector (Swat) and Quick Krunker Docs Integration (KNLZVX) are part of the client now, each with its own on/off switch in Settings > Userscripts (and the dashboard). They work even when the scripts folder is off, and they start switched off. Userscripts written for Tampermonkey work as they are: `unsafeWindow`, `GM_setClipboard`, `@match` / `@exclude` and `@require` of the bundled msgpack library are supported. A script can offer settings and an unload function with `this.settings` and `this.unload`, no `return this` needed
 
 ### Inherited from KCC
 
@@ -251,7 +251,7 @@ Notes:
 
 ## Userscripts
 
-Settings > Userscripts has an **Install** button for five example scripts (Class Roulette and Quick Sell by Rarity from Kute, Krunker Reconnector by Swat, Quick Krunker Docs Integration by KNLZVX, Kill Streak by KRH).
+Settings > Userscripts lists the **Built-in Scripts** (Kill Streak, Class Roulette, Quick Sell by Rarity, Krunker Reconnector, Quick Krunker Docs Integration) with a switch each. They are part of the client, so they need no scripts folder and no install step. Quick Krunker Docs Integration runs in the map editor and the scripting window, the others in the game.
 
 Any `.js` file in the scripts folder is loaded as a userscript if userscripts are enabled in the settings. Scripts support Tampermonkey-style metadata blocks (`@name`, `@author`, `@version`, `@desc`) and can define custom settings (boolean, number, select, color, keybind).
 

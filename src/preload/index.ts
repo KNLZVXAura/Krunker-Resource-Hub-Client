@@ -3,7 +3,7 @@ import { fetchGame, loadMatchmakerLists } from './matchmaker';
 import type { MatchmakerConfig } from './matchmaker';
 import { hookSettings } from './settings-render';
 import { hookNativeImport } from './native-import';
-import { initUserscripts } from './userscripts';
+import { initUserscripts, initBuiltins } from './userscripts';
 import { initTranslator } from './translator';
 import { clampBrightness, installCompositorAnimFix, setDeathAnimBlock, setGameBrightness, setMenuTimer, setWatermark, showToast } from './utils';
 import { initChat } from './chat';
@@ -459,6 +459,8 @@ ipcRenderer.on('main_did-finish-load', () => {
     }
 
     // ── Initialize userscripts ──
+    // Built-in scripts have their own switches and do not depend on the scripts folder setting
+    void initBuiltins(_console).catch(err => _console.error('[KRH] Built-in scripts error:', err));
     const usEnabled = usConf ? usConf.enabled : true;
     if (usEnabled) {
       initUserscripts(_console).catch(err => _console.error('[KRH] Userscript init error:', err));
@@ -648,5 +650,7 @@ ipcRenderer.on('main_did-finish-load', () => {
 // ── Lightweight tab page init (skips game-only features) ──
 ipcRenderer.on('main_did-finish-load-tab', () => {
   _console.log('[KRH] Tab page loaded');
+  // Editor and scripting pages: the built-in scripts that target them (Quick Krunker Docs Integration)
+  void initBuiltins(_console, true).catch(err => _console.error('[KRH] Built-in scripts error:', err));
   (window as any).closeClient = () => window.close();
 });

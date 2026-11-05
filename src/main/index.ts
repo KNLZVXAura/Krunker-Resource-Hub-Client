@@ -19,11 +19,7 @@ import { openDashboard, closeDashboard, isDashboardVisible, isDashboardFocused, 
 import { GAME_PROBE_JS, clearLock, lockdownPage, readLock, scanLaunchFlags, scanProcesses, scanScripts, writeLock } from './integrity';
 import { registerSiteBridge } from './site-bridge';
 import { recordGameUrl, recordGameTitle, cacheLimitMb } from './dashboard-extras';
-import exampleClassRoulette from '../../assets/example-userscripts/classRoulette.js?raw';
-import exampleQuickSell from '../../assets/example-userscripts/quickSellByRarity.js?raw';
-import exampleReconnector from '../../assets/example-userscripts/Krunker_Reconnector.js?raw';
-import exampleDocs from '../../assets/example-userscripts/Quick_Krunker_Docs_Integration.js?raw';
-import exampleKillStreak from '../../assets/example-userscripts/killstreak.js?raw';
+import { BuiltinScripts, isBuiltinFilename } from './builtin-scripts';
 import libMsgpack from '../../assets/userscript-libs/msgpack-lite-0.1.26.min.js?raw';
 import { ALL_CLIENT_CSS, HIDE_ADS_CSS, CONSENT_DISMISS_JS } from './client-ui';
 import { electronLog, rendererLog, getLogPath, closeLogStreams } from './logger';
@@ -744,6 +740,8 @@ async function launchApp(): Promise<void> {
   const usConfig = config.get('userscripts') || { enabled: true, path: '' };
   const usDir = usConfig.path || join(app.getPath('userData'), 'KRH Client');
   const userscriptManager = usConfig.enabled && !safeMode ? new UserscriptManager(usDir) : null;
+  // Built-in scripts: shipped inside the app, own on/off switches, independent of the scripts folder.
+  const builtinScripts = safeMode ? null : new BuiltinScripts(join(app.getPath('userData'), 'KRH Client', 'builtin-scripts'));
   // Switches off a userscript that crashes or hangs the game right after it was added or changed.
   const scriptGuard = userscriptManager ? new UserscriptGuard(join(app.getPath('userData'), 'KRH Client', 'userscript-health.json'), userscriptManager) : null;
   let healthyTimer: NodeJS.Timeout | null = null;
@@ -1952,30 +1950,10 @@ async function launchApp(): Promise<void> {
     return true;
   });
 
-  // Example userscripts (Class Roulette and Quick Sell by Rarity, both from Kute; Kill Streak by KRH): copied into the userscripts
-  // folder on request, never over a file that is already there. New scripts start switched off.
   // @require libraries a userscript may ask for: only the ones shipped with the client (no download, nothing else is served).
   ipcMain.on('userscripts-require', (e, url: unknown) => {
     e.returnValue = url === 'https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js' ? libMsgpack : '';
   });
-  ipcMain.handle('install-example-userscripts', () => {
-    if (!userscriptManager) return { ok: false, error: 'Turn on Userscripts in the Userscripts settings and restart the client first.', added: [] as string[] };
-    const added: string[] = [];
-    const existing: string[] = [];
-    try {
-      for (const [name, code] of [['classRoulette.js', exampleClassRoulette], ['quickSellByRarity.js', exampleQuickSell], ['Krunker_Reconnector.js', exampleReconnector], ['Quick_Krunker_Docs_Integration.js', exampleDocs], ['killstreak.js', exampleKillStreak]] as const) {
-        const target = join(userscriptManager.dir, name);
-        if (existsSync(target)) { existing.push(name); continue; }
-        writeFileSync(target, code, 'utf-8');
-        added.push(name);
-      }
-    } catch (err) {
-      electronLog.warn('[KRH] Could not install the example userscripts:', (err as Error).message);
-      return { ok: false, error: 'Could not write to the userscripts folder.', added };
-    }
-    return { ok: true, error: '', added, existing };
-  });
-
   // Userscript hot reload: when a script file changes, tell you (or reload the page) without restarting the client
   if (userscriptManager) {
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2658,11 +2636,25 @@ async function launchApp(): Promise<void> {
   ipcMain.handle('userscripts-set-tracker', (_e, tracker: Record<string, boolean>) => {
     if (userscriptManager) userscriptManager.saveTracker(tracker);
   });
+  ipcMain.handle('builtin-scripts-scan', () => (builtinScripts ? builtinScripts.list() : []));
+  ipcMain.handle('builtin-scripts-set', (_e, filename: unknown, enabled: unknown) => {
+    if (!builtinScripts || !isBuiltinFilename(filename) || typeof enabled !== 'boolean') return false;
+    const ok = builtinScripts.setEnabled(filename, enabled);
+    if (ok && !win.isDestroyed()) win.webContents.send('builtin-scripts-changed', filename, enabled);
+    return ok;
+  });
+  ipcMain.on('builtin-script-error', (_e, filename: unknown, msg: unknown) => {
+    if (!isBuiltinFilename(filename) || win.isDestroyed()) return;
+    electronLog.warn('[KRH] Built-in script failed:', filename, String(msg).slice(0, 200));
+    win.webContents.send('krh-toast', `Built-in script ${filename.replace(/^builtin-|\.js$/g, '')} failed: ${String(msg).slice(0, 80)}`);
+  });
   ipcMain.handle('userscripts-load-prefs', (_e, filename: string) => {
+    if (isBuiltinFilename(filename)) return builtinScripts ? builtinScripts.loadPrefs(filename) : {};
     if (!userscriptManager) return {};
     return userscriptManager.loadScriptPrefs(filename);
   });
   ipcMain.handle('userscripts-save-prefs', (_e, filename: string, prefs: Record<string, unknown>) => {
+    if (isBuiltinFilename(filename)) { builtinScripts?.savePrefs(filename, prefs); return; }
     if (userscriptManager) userscriptManager.saveScriptPrefs(filename, prefs);
   });
 

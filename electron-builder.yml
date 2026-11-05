@@ -4,7 +4,7 @@ productName: KRH Client
 # real 4-part release version is injected into the packaged app here. app.getVersion(), the
 # installer filenames and the Windows file/product version all come from this value.
 extraMetadata:
-  version: 3.0.0
+  version: 3.0.1
 directories:
   output: out
   buildResources: build

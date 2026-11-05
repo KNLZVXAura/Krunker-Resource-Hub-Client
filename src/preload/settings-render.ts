@@ -26,7 +26,7 @@ import {
   buildChatSection, stopMusicPreview,
 } from './settings-sections';
 import { buildAccountsSection } from './alt-manager';
-import { getInstances, setScriptEnabled } from './userscripts';
+import { getInstances, setScriptEnabled, parseMetadata } from './userscripts';
 import type { UserscriptInstance } from './userscripts';
 
 // ── Krunker native settings (localStorage) ──
@@ -538,7 +538,7 @@ function renderUserscriptsSection(body: HTMLElement, dashboard = false): void {
 
     engineGroup.appendChild(createToggleRow({
       label: 'Userscripts',
-      desc: 'Load custom scripts from the scripts folder',
+      desc: 'Load your own scripts from the scripts folder. The built-in scripts below do not need this',
       checked: us.enabled, restart: true,
       onChange: (v) => { us.enabled = v; ipcRenderer.invoke('set-config', 'userscripts', us); },
     }));
@@ -549,28 +549,61 @@ function renderUserscriptsSection(body: HTMLElement, dashboard = false): void {
       buttons: [{ icon: 'folder', label: 'Scripts', title: 'Open Folder', onClick: () => ipcRenderer.invoke('userscripts-open-folder') }],
     }).row);
 
-    engineGroup.appendChild(createButtonRow({
-      label: 'Example Userscripts',
-      desc: 'Adds five scripts to the scripts folder: Class Roulette (a random class on every respawn) and Quick Sell by Rarity (both from Kute), Krunker Reconnector (by Swat: starts your private game again after "Server limit reached") and Quick Krunker Docs Integration (by KNLZVX: the Quick KrunkScript docs in the Editor and scripting screen) and Kill Streak (a +N pop-up for every kill in a row, a nuke at 25). They start switched off, and files that already exist are never replaced.',
-      buttons: [{ icon: 'download', label: 'Install', title: 'Copy the example scripts into the scripts folder', onClick: () => {
-        void ipcRenderer.invoke('install-example-userscripts').then((r: { ok: boolean; error: string; added: string[] }) => {
-          if (!r.ok) { showToast(r.error); return; }
-          showToast(r.added.length
-            ? 'Installed ' + r.added.join(', ') + '. Reload the page, then switch them on in the list below'
-            : 'The example scripts are already in your scripts folder');
-        });
-      } }],
-    }).row);
+    // ── Built-in scripts: part of the client, own on/off switch each ──
+    const builtinGroup = createGroup(body, 'Built-in Scripts');
+    const addBuiltinRow = (grp: HTMLElement, name: string, descHtml: string, enabled: boolean, onToggle: (on: boolean, cb: HTMLInputElement) => void): HTMLInputElement => {
+      const { row, control } = createRowShell(name, descHtml);
+      control.innerHTML = '<label class="krh-toggle"><input type="checkbox"' + (enabled ? ' checked' : '') + '><span class="krh-toggle-track"></span></label>';
+      grp.appendChild(row);
+      const cb = control.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      cb.addEventListener('change', () => onToggle(cb.checked, cb));
+      return cb;
+    };
+    const metaHtml = (m: { author: string; version: string; desc: string }): string => {
+      const parts: string[] = [];
+      if (m.author) parts.push('by ' + escapeHtml(m.author));
+      if (m.version) parts.push('v' + escapeHtml(m.version));
+      return escapeHtml(m.desc || '') + (parts.length ? '<br><span class="krh-us-meta">' + parts.join(' &middot; ') + '</span>' : '');
+    };
 
     if (dashboard) {
-      // The per-script settings live in the running game page; the list, switches and editor are on the Userscripts page of the dashboard.
-      engineGroup.appendChild(createInfoRow('Switch scripts on or off and write them on the Userscripts page of this dashboard. The settings a script offers appear in the game, under Settings > Client > Userscripts.'));
+      // The game page runs the scripts; the dashboard only flips the switch (the game applies it live) and edits your own scripts.
+      void ipcRenderer.invoke('builtin-scripts-scan').then((list: { filename: string; content: string; enabled: boolean }[]) => {
+        if (!Array.isArray(list) || list.length === 0) {
+          builtinGroup.appendChild(createInfoRow('Built-in scripts are off in Safe Mode.'));
+        } else {
+          for (const b of list) {
+            const meta = parseMetadata(b.content);
+            addBuiltinRow(builtinGroup, meta.name || b.filename, metaHtml(meta), b.enabled, (on) => {
+              void ipcRenderer.invoke('builtin-scripts-set', b.filename, on).then(() => showToast((meta.name || 'Script') + (on ? ' is on' : ' is off') + '. The settings of a script are in the game, under Settings > Client > Userscripts'));
+            });
+          }
+        }
+        reapplySearch();
+      });
+      engineGroup.appendChild(createInfoRow('Your own scripts are switched on or off and written on the Userscripts page of this dashboard. The settings a script offers appear in the game, under Settings > Client > Userscripts.'));
       reapplySearch();
       return;
     }
+
+    const allInstances = getInstances();
+    for (const inst of allInstances.filter((i) => i.builtin)) {
+      const settingsContainer = document.createElement('div');
+      settingsContainer.className = 'krh-us-settings';
+      addBuiltinRow(builtinGroup, inst.meta.name || inst.filename, metaHtml(inst.meta), inst.enabled, (on) => {
+        const { needsReload } = setScriptEnabled(inst.filename, on, _console);
+        settingsContainer.innerHTML = '';
+        if (on && inst.settings) renderScriptSettings(inst, settingsContainer);
+        if (needsReload) onSettingChanged('refresh');
+      });
+      builtinGroup.appendChild(settingsContainer);
+      if (inst.enabled && inst.settings) renderScriptSettings(inst, settingsContainer);
+    }
+    if (!allInstances.some((i) => i.builtin)) builtinGroup.appendChild(createInfoRow('Built-in scripts are off in Safe Mode, or they are still starting. Reopen this page in a moment.'));
+
     const scriptsGroup = createGroup(body, 'Installed Scripts');
 
-    const scriptInstances = getInstances();
+    const scriptInstances = allInstances.filter((i) => !i.builtin);
     if (scriptInstances.length === 0) {
       scriptsGroup.appendChild(createInfoRow('No userscripts found. Place .js files in the scripts folder and reload.'));
       reapplySearch();

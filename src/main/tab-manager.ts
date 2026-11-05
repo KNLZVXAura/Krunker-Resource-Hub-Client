@@ -302,6 +302,7 @@ export class TabManager {
             cwc.insertCSS(ALL_CLIENT_CSS).catch(() => {});
             cwc.insertCSS(HIDE_ADS_CSS).catch(() => {});
             cwc.executeJavaScript(CONSENT_DISMISS_JS).catch(() => {});
+            cwc.send('main_did-finish-load-tab'); // lets the built-in scripts for the scripting page start
             // The editor hands the map to this window through window.opener: say in the log if that link is missing.
             cwc.executeJavaScript('!!window.opener').then((linked) => {
                 if (linked) electronLog.log('[KRH] Scripting window opened by the editor (window.opener is set)');
