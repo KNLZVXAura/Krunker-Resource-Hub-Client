@@ -49,10 +49,11 @@ jobs:
           fi
 
   build-desktop:
-    name: Build Windows + Linux
+    name: Build Linux
     needs: version-check
     if: needs.version-check.outputs.SKIP == 'false' || inputs.force_build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -62,60 +63,38 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install system dependencies
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            wine wine32 wine64 \
-            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2t64 \
-            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
-            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
-            libcairo2 libasound2t64 libgtk-3-0
-          WINEDEBUG=-all wine wineboot --init || true
-
+      # No apt step any more: Wine (wine32 + 100 MB libwine:i386, ~250 MB of packages) was only needed to build
+      # the Windows NSIS installer on Linux. Windows is now built natively in the build-windows job.
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
       - name: Build source
         run: npm run build
 
-      - name: Build Windows distributables
-        env:
-          WINEDEBUG: "-all"
-        run: npx electron-builder --win -c.electronDist=node_modules/electron/dist-win --publish never
-
       - name: Build Linux distributables
         run: npx electron-builder --linux -c.electronDist=node_modules/electron/dist-linux --publish never
-
-      # Update without the installer: app.asar plus a small manifest (lite.json), see src/shared/lite-update.ts.
-      # Fails the build if app.asar or the Electron stamp is missing, rather than publishing a manifest that
-      # would send every client back to the installer.
-      - name: Build lite update files
-        run: node scripts/lite-release.mjs
 
       - name: Report build sizes
         run: |
           echo "=== Build output sizes ==="
-          ls -lh out/*.exe out/*.AppImage out/*.deb 2>/dev/null || true
+          ls -lh out/*.AppImage out/*.deb 2>/dev/null || true
 
-      - name: Upload desktop artifacts
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: dist-desktop
+          name: dist-linux
           path: |
-            out/*.exe
             out/*.AppImage
             out/*.deb
-            out/lite/lite.json
-            out/lite/*.asar
           if-no-files-found: error
 
+  # Job id stays "build-msi" so the release job's `needs` list keeps working.
   build-msi:
-    name: Build Windows MSI
+    name: Build Windows (Setup + Portable + MSI)
     needs: version-check
     if: needs.version-check.outputs.SKIP == 'false' || inputs.force_build
     runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -134,19 +113,31 @@ jobs:
         shell: bash
         run: npm run build
 
-      - name: Build MSI
+      # One native run builds NSIS Setup, Portable and MSI from the same win-unpacked folder (no Wine needed).
+      - name: Build Windows distributables
         shell: bash
-        run: npx electron-builder --win msi --x64 -c.electronDist=node_modules/electron/dist --publish never
+        run: npx electron-builder --win nsis portable msi --x64 -c.electronDist=node_modules/electron/dist --publish never
 
-      - name: Report build size
+      # Update without the installer: app.asar plus a small manifest (lite.json), see src/shared/lite-update.ts.
+      # Fails the build if app.asar or the Electron stamp is missing, rather than publishing a manifest that
+      # would send every client back to the installer.
+      - name: Build lite update files
         shell: bash
-        run: ls -lh out/*.msi
+        run: node scripts/lite-release.mjs
 
-      - name: Upload MSI artifact
+      - name: Report build sizes
+        shell: bash
+        run: ls -lh out/*.exe out/*.msi
+
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: dist-msi
-          path: out/*.msi
+          name: dist-windows
+          path: |
+            out/*.exe
+            out/*.msi
+            out/lite/lite.json
+            out/lite/*.asar
           if-no-files-found: error
 
   build-mac:
