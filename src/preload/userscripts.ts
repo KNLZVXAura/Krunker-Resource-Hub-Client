@@ -1,4 +1,6 @@
 import { ipcRenderer, webFrame } from 'electron';
+import { analyzeScript, NO_UNLOAD_NOTE } from '../shared/script-health';
+import type { ScriptHealth, ScriptStatus } from '../shared/script-health';
 
 // ── Types ──
 
@@ -40,6 +42,10 @@ export interface UserscriptInstance {
   settings: Record<string, UserscriptSetting> | null;
   /** Shipped inside the app (switch kept by the main process, not by tracker.json). */
   builtin?: boolean;
+  /** For the health panel: the last start error, why it was skipped, how long it took to start. */
+  error?: string;
+  skipped?: string;
+  runMs?: number;
 }
 
 // ── State ──
@@ -167,8 +173,13 @@ function executeScript(
   const twin = instances.find((i) => i !== instance && i.executed && i.builtin !== instance.builtin && !!instance.meta.name && i.meta.name === instance.meta.name);
   if (twin) {
     _console.warn('[KRH] Userscript skipped, "' + instance.meta.name + '" already runs as ' + (twin.builtin ? 'a built-in script' : 'a script from the scripts folder') + ' (' + twin.filename + '). Switch off or delete the copy in the scripts folder.');
+    instance.skipped = (twin.builtin ? 'the built-in copy' : 'the copy in the scripts folder') + ' already runs (' + twin.filename + ')';
+    publishScriptHealth();
     return;
   }
+  instance.skipped = undefined;
+  instance.error = undefined;
+  const startedAt = performance.now();
   loadRequires(instance.meta, _console);
 
   const context: Record<string, unknown> = {
@@ -206,9 +217,13 @@ function executeScript(
     void result;
 
     instance.executed = true;
+    instance.runMs = Math.round(performance.now() - startedAt);
     _console.log('[KRH] Userscript executed:', instance.meta.name || instance.filename);
+    publishScriptHealth();
   } catch (err) {
     _console.error('[KRH] Userscript error in', instance.filename, ':', err);
+    instance.error = String(err instanceof Error ? err.message : err).slice(0, 200);
+    publishScriptHealth();
     // The main process counts repeated failures (a script that throws on every start gets switched off).
     try { ipcRenderer.send(instance.builtin ? 'builtin-script-error' : 'userscript-error', instance.filename, String(err instanceof Error ? err.message : err).slice(0, 200)); } catch { /* ignore */ }
   }
@@ -228,6 +243,42 @@ async function applyPreferences(instance: UserscriptInstance): Promise<void> {
       }
     }
   }
+}
+
+// ── Health report for the Userscripts page ──
+
+function healthOf(i: UserscriptInstance): ScriptHealth {
+  let status: ScriptStatus;
+  if (!i.enabled) status = 'off';
+  else if (i.error) status = 'error';
+  else if (i.skipped) status = 'skipped-twin';
+  else if (i.executed) status = 'running';
+  else if (!matchesPage(i.meta)) status = 'other-page';
+  else status = 'waiting';
+  const notes = analyzeScript(i.content);
+  if (i.executed && !i.unload) notes.push(NO_UNLOAD_NOTE);
+  return {
+    filename: i.filename,
+    name: i.meta.name || i.filename,
+    version: i.meta.version,
+    builtin: i.builtin === true,
+    status,
+    detail: status === 'error' ? (i.error ?? '') : status === 'skipped-twin' ? (i.skipped ?? '') : '',
+    runMs: i.executed ? (i.runMs ?? 0) : 0,
+    notes,
+    at: Date.now(),
+  };
+}
+
+let healthTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Tell the main process how every script is doing (the dashboard and the settings read it from there). Debounced. */
+export function publishScriptHealth(): void {
+  if (healthTimer) return;
+  healthTimer = setTimeout(() => {
+    healthTimer = null;
+    try { ipcRenderer.send('script-health', instances.map(healthOf)); } catch { /* main process not reachable */ }
+  }, 150);
 }
 
 // ── Public API ──
@@ -287,6 +338,7 @@ export async function initUserscripts(
   }
 
   _console.log('[KRH] Userscripts initialized:', instances.length, 'scripts loaded');
+  publishScriptHealth();
 }
 
 export function setScriptEnabled(
@@ -298,6 +350,7 @@ export function setScriptEnabled(
   if (!inst) return { needsReload: false };
 
   inst.enabled = enabled;
+  publishScriptHealth();
 
   // Update tracker
   if (inst.builtin) {
@@ -372,5 +425,6 @@ export async function initBuiltins(
     executeScript(inst, _console);
     await applyPreferences(inst);
   }
+  publishScriptHealth();
   _console.log('[KRH] Built-in scripts started:', instances.filter((i) => i.builtin && i.executed).map((i) => i.meta.name || i.filename).join(', ') || 'none switched on');
 }

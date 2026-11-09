@@ -4,22 +4,26 @@
 // `dash:*` channel like the rest of the dashboard, and every value from the page is validated again here.
 
 import { ipcMain } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { dirname } from 'path';
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'fs';
+import { basename, dirname, join as joinPath } from 'path';
 import { getStats, kd, fmtDuration, summaryText, topMap } from './session-stats';
 import { renderMarkdown } from '../shared/markdown';
 import { redact } from '../shared/redact';
-import { electronLog } from './logger';
+import { filterId, filterLog, isLogFileName, LOG_FILTERS } from '../shared/log-filter';
+import { electronLog, getLogPath } from './logger';
 import { liveData, type LiveKind } from './game-api';
 import type { DoctorResult } from './perf-doctor';
 import type { NewsResult } from './news-feed';
 import type { AutoDisabled } from './userscript-guard';
+import type { BackupResult } from './backup';
 
 export interface ExtraDeps {
   dataPath: string;
   version: string;
   buildSystemInfo: () => Promise<string>;
   logTail: () => string;
+  /** Extra report sections: userscript health, connection events, script search, backups (already plain text). */
+  extraReport: () => string;
   copyText: (text: string) => void;
   getPings: (force: boolean) => Promise<Record<string, number>>;
   getMatchmakerRegions: () => string[];
@@ -32,6 +36,10 @@ export interface ExtraDeps {
   deleteProfile: (name: string) => boolean;
   applyLowEndAndRestart: () => void;
   perfDoctor: () => Promise<DoctorResult>;
+  /** Full backup of settings, userscripts, custom CSS and statistics into one file (asks where to save). */
+  backupCreate: () => Promise<BackupResult>;
+  /** Restore such a file (asks which file, then asks to confirm). */
+  backupRestore: () => Promise<BackupResult>;
   news: (force: boolean) => Promise<NewsResult>;
   openHubRoute: (route: string) => void;
   scriptGuard: { list: () => AutoDisabled[]; reenable: (file: string) => Promise<boolean>; dismiss: (file: string) => void };
@@ -171,13 +179,45 @@ export function registerExtras(deps: ExtraDeps): void {
   const report = async (): Promise<string> => {
     const info = await deps.buildSystemInfo();
     const log = redact(deps.logTail());
-    return `${info}\n===== Recent log (e-mails and tokens hidden) =====\n${log || '(empty)'}\n`;
+    const extra = redact(deps.extraReport());
+    return `${info}\n${extra}\n\n===== Recent log (e-mails and tokens hidden) =====\n${log || '(empty)'}\n`;
   };
+  // Log viewer (Dashboard > Logs): the log of one day, filtered by topic and search text, e-mails and tokens hidden
+  const readTail = (path: string, maxBytes: number): string => {
+    const fd = openSync(path, 'r');
+    try {
+      const size = statSync(path).size;
+      const start = Math.max(0, size - maxBytes);
+      const buf = Buffer.alloc(size - start);
+      readSync(fd, buf, 0, buf.length, start);
+      const text = buf.toString('utf-8');
+      return start > 0 ? text.slice(text.indexOf('\n') + 1) : text; // drop the cut line at the start
+    } finally { closeSync(fd); }
+  };
+  h('dash:log-list', () => {
+    const current = basename(getLogPath());
+    let files: string[] = [];
+    try { files = readdirSync(dirname(getLogPath())).filter(isLogFileName).sort().reverse(); } catch { /* no folder yet */ }
+    return { files, current, filters: LOG_FILTERS };
+  });
+  h('dash:log-read', (_e, raw: unknown) => {
+    const r = (raw ?? {}) as { file?: unknown; filter?: unknown; query?: unknown };
+    const name = isLogFileName(r.file) ? r.file : basename(getLogPath());
+    try {
+      const text = readTail(joinPath(dirname(getLogPath()), name), 3 * 1024 * 1024);
+      const f = filterLog(text, filterId(r.filter), typeof r.query === 'string' ? r.query : '');
+      return { text: redact(f.lines.join('\n')), total: f.total, matched: f.matched, shown: f.lines.length };
+    } catch { return { text: '', total: 0, matched: 0, shown: 0, error: 'Could not read that log.' }; }
+  });
   h('dash:diag', async () => ({ text: await report() }));
   h('dash:diag-copy', async () => { deps.copyText(await report()); return true; });
 
   // ── Performance doctor ──
   h('dash:perf-doctor', async () => deps.perfDoctor());
+
+  // ── Backup and restore (both open a file dialog, restore also asks for confirmation) ──
+  h('dash:backup-create', async () => deps.backupCreate());
+  h('dash:backup-restore', async () => deps.backupRestore());
   h('dash:copy-text', (_e, text: unknown) => {
     if (typeof text !== 'string' || text.length === 0 || text.length > 20_000) return false;
     deps.copyText(text);

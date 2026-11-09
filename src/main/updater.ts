@@ -3,8 +3,9 @@ import { createReadStream, createWriteStream, renameSync, unlinkSync, existsSync
 import { pipeline } from 'stream';
 import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { app } from 'electron';
+import { app, dialog } from 'electron';
 import { electronLog } from './logger';
+import { runPreUpdate } from './pre-update';
 
 export interface UpdateInfo {
   version: string;
@@ -38,6 +39,8 @@ interface GithubRelease {
   html_url: string;
   body?: string;
   assets: GithubAsset[];
+  prerelease?: boolean;
+  draft?: boolean;
 }
 
 // Update checks read the latest GitHub release of the repository configured below (KNLZVXAura/Krunker-Resource-Hub-Client).
@@ -125,6 +128,7 @@ function fetchLatestRelease(currentVersion: string): Promise<GithubRelease | nul
         }
 
         let data = '';
+        res.setEncoding('utf8'); // a multi-byte character cut in two by a chunk border would be damaged otherwise
         res.on('data', (chunk: string) => { data += chunk; });
         res.on('end', () => {
           try {
@@ -394,11 +398,60 @@ export function downloadUpdate(url: string, destPath: string, onProgress: Progre
   });
 }
 
+// ── Earlier versions (Settings > Extras > Earlier Versions) ──
+
+export interface PastRelease { version: string; downloadUrl: string; fileSize: number; sha256: string; notes: string }
+
+/** The release list of the repository (the API only: the "latest" redirect trick cannot list older ones). Never rejects. */
+function fetchReleaseList(currentVersion: string): Promise<GithubRelease[] | null> {
+  return new Promise((resolve) => {
+    const url = UPDATE_CONFIG.checkUrl.replace(/\/latest$/, '') + '?per_page=15';
+    const req = httpsGet(url, { headers: { 'User-Agent': 'KrunkerKRHClient/' + currentVersion, Accept: 'application/vnd.github+json' } }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); electronLog.warn('[KRH-Update] Release list returned status', res.statusCode); resolve(null); return; }
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { data += chunk; });
+      res.on('end', () => { try { const j = JSON.parse(data) as unknown; resolve(Array.isArray(j) ? (j as GithubRelease[]) : null); } catch { resolve(null); } });
+      res.on('error', () => resolve(null));
+    });
+    req.setTimeout(CHECK_TIMEOUT_MS, () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/**
+ * Older releases that have a Windows installer with a SHA-256 digest (an installer without one is never offered, the same
+ * rule as for updates), newest first, at most `max`. `ok: false` when GitHub did not answer (it allows 60 requests an hour).
+ */
+export async function listPastReleases(currentVersion: string, max = 5): Promise<{ ok: boolean; releases: PastRelease[] }> {
+  const list = await fetchReleaseList(currentVersion);
+  if (!list) return { ok: false, releases: [] };
+  const pattern = updateAssetPattern();
+  const out: PastRelease[] = [];
+  for (const r of list) {
+    if (r.draft || r.prerelease) continue;
+    const version = (r.tag_name || '').replace(/^v/i, '');
+    if (!version || !isSafeVersion(version) || !versionLessThan(version, currentVersion)) continue;
+    const asset = (r.assets || []).find((a) => pattern.test(a.name));
+    const sha256 = (asset?.digest || '').replace(/^sha256:/i, '');
+    if (!asset || !sha256 || !isAllowedRedirect(asset.browser_download_url)) continue;
+    out.push({ version, downloadUrl: asset.browser_download_url, fileSize: asset.size, sha256, notes: r.body || '' });
+  }
+  out.sort((a, b) => (versionLessThan(a.version, b.version) ? 1 : versionLessThan(b.version, a.version) ? -1 : 0));
+  return { ok: true, releases: out.slice(0, max) };
+}
+
 export function installUpdate(installerPath: string): void {
+  runPreUpdate();
   electronLog.log('[KRH-Update] Launching installer:', installerPath);
   const child = spawn(installerPath, [], {
     detached: true,
     stdio: 'ignore',
+  });
+  // Without a listener a failed start (antivirus, permissions, a missing file) is an uncaught exception in the main process
+  child.on('error', (err) => {
+    electronLog.error('[KRH-Update] Could not start the installer:', err);
+    try { dialog.showErrorBox('KRH Client', `The installer could not be started (${err.message}).\n\nYou can run it by hand: ${installerPath}`); } catch { /* app is already closing */ }
   });
   child.unref();
   app.quit();

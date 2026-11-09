@@ -2,14 +2,15 @@
 // A share code is a piece of text that can be pasted into Discord or a chat. It carries the data itself
 // (compressed), so it needs no server and nothing is uploaded anywhere:
 //   KRH1.<kind>.<base64url of deflate(JSON)>
-// kinds: profile (a Krunker settings profile), crosshair, loadout (a list of resource packs + where to get them).
+// kinds: profile (a Krunker settings profile), crosshair, loadout (a list of resource packs + where to get them),
+// autoprofile (one Auto Profiles rule with the presets it uses).
 // A code only ever carries plain data. The receiver checks it again before using it (see index.ts).
 
 import { deflateRawSync, inflateRawSync } from 'zlib';
 
-export type ShareKind = 'profile' | 'crosshair' | 'loadout';
+export type ShareKind = 'profile' | 'crosshair' | 'loadout' | 'autoprofile';
 
-const KINDS: ReadonlySet<string> = new Set<ShareKind>(['profile', 'crosshair', 'loadout']);
+const KINDS: ReadonlySet<string> = new Set<ShareKind>(['profile', 'crosshair', 'loadout', 'autoprofile']);
 const PREFIX = 'KRH1';
 const MAX_CODE_CHARS = 3_000_000;
 const MAX_JSON_BYTES = 2_500_000;

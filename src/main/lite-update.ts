@@ -21,6 +21,7 @@ import * as ofs from 'original-fs';
 import { LITE_MANIFEST_NAME, liteVerdict, parseLiteManifest, releaseAssetUrl, type LiteAsset, type LiteManifest } from '../shared/lite-update';
 import { sha512, swapAsar } from './lite-swap';
 import { electronLog } from './logger';
+import { runPreUpdate } from './pre-update';
 
 /** Where releases are published. Matches `homepage` in package.json. */
 const RELEASES = { owner: 'KNLZVXAura', repo: 'Krunker-Resource-Hub-Client' } as const;
@@ -202,6 +203,7 @@ export async function updateWithoutInstaller(version: string, onPercent: (percen
  */
 export function applyLite(): void {
   if (!staged) return;
+  runPreUpdate();
   const asar = staged;
   staged = null;
   try {

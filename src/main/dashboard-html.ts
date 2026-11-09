@@ -196,6 +196,7 @@ const BODY = `
   <button data-p="profiles">Profiles</button>
   <button data-p="keybinds">Keybinds</button>
   <button data-p="diag">Diagnostics</button>
+  <button data-p="logs">Logs</button>
   <button data-p="updates">What's new</button>
   <button data-p="look">Maintenance</button>
  </nav>
@@ -282,6 +283,10 @@ const BODY = `
    <div class="card"><h2>Performance doctor</h2><p>Low FPS or lag? One click checks the Electron build, your FPS and GPU settings, display scaling and which processes use CPU. Run it while the game is open for the real picture.</p><div class="row"><button class="btn" id="drRun">Run check</button><button class="btn ghost" id="drCopy" hidden>Copy report</button></div><p class="drsum" id="drSum"></p><div id="drList"></div></div>
    <div class="card"><div class="row"><button class="btn" id="dgCopy">Copy report</button><button class="btn ghost" id="dgRefresh">Refresh</button><button class="btn ghost" id="dgLogs">Open logs folder</button></div><pre class="diag" id="dgText">Loading...</pre></div>
   </section>
+  <section id="p-logs" hidden>
+   <h1>Logs</h1><p class="sub">The client log of one day, so you do not have to open the text file. Pick a topic, search for a word, copy what you see. E-mail addresses and tokens are hidden.</p>
+   <div class="card"><div class="row"><select id="lvFilter"></select><select id="lvDay"></select><input id="lvQuery" type="text" maxlength="80" placeholder="search text"><button class="btn" id="lvRefresh">Refresh</button><button class="btn ghost" id="lvCopy">Copy</button><button class="btn ghost" id="lvOpen">Open logs folder</button></div><p id="lvInfo" style="margin:10px 0 0;opacity:.7"></p><pre class="diag" id="lvText">Loading...</pre></div>
+  </section>
   <section id="p-updates" hidden>
    <h1>What's new</h1><p class="sub" id="upSub"></p>
    <div class="card"><div class="row"><button class="btn" id="upCheck">Check for updates</button><button class="btn ghost" data-link="https://github.com/KNLZVXAura/Krunker-Resource-Hub-Client/releases">Open releases</button><button class="btn ghost" id="upCopy" hidden>Copy report</button></div><p id="upNote" style="margin:10px 0 0"></p><pre id="upReport" hidden style="margin:10px 0 0;white-space:pre-wrap;font-size:12px;line-height:1.5;opacity:.9"></pre></div>
@@ -317,6 +322,7 @@ const BODY = `
    <h1>Maintenance</h1><p class="sub">Cache, logs and clean-up tools.</p>
    <div class="card"><h2>Cache</h2><p id="chInfo">Measuring...</p><div class="row"><label for="chLimit" class="meta">Clear it automatically when it is bigger than</label><select id="chLimit"><option value="0">Never</option><option value="500">500 MB</option><option value="1000">1 GB</option><option value="2000">2 GB</option></select><button class="btn ghost" id="chNow">Clear now</button></div></div>
    <div class="card"><h2>Logs</h2><p>Where KRH Client writes what it is doing (useful for bug reports).</p><button class="btn ghost" id="lgOpen">Open logs folder</button></div>
+   <div class="card"><h2>Backup</h2><p>Saves your client settings, userscripts, custom CSS, built-in script options and statistics in one file. Saved accounts and the swapper folder are not included. Restore it on this or another computer.</p><div class="row"><button class="btn ghost" id="bkMake">Create backup...</button><button class="btn ghost" id="bkRestore">Restore backup...</button></div><p id="bkInfo" class="meta"></p></div>
    <div class="card"><h2>Clear cache</h2><p>Deletes Krunker's cached files only. You stay signed in and keep your game settings.</p><button class="btn ghost" id="clCache">Clear cache</button></div>
    <div class="card"><h2>Clear Krunker data</h2><p>Deletes cookies, local storage and cache saved by the game in this client. You will be signed out and Krunker's own settings go back to default. KRH Client settings are kept.</p><button class="btn bad" id="clData">Clear Krunker data...</button></div>
   </section>
@@ -338,7 +344,7 @@ function show(p) {
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === p));
   if (p === 'scripts') loadScripts(); if (p === 'css') loadCss(); if (p === 'themes') { loadThemes(); loadBg(); } if (p === 'look') loadCache();
   if (p === 'home') loadGames(); if (p === 'servers') loadServers(false); if (p === 'history') loadHistory();
-  if (p === 'profiles') loadProfiles(); if (p === 'keybinds') loadKeybinds(); if (p === 'diag') loadDiag(); if (p === 'news') loadNews(false); if (p === 'home') loadGuard(); if (p === 'updates') loadUpdates();
+  if (p === 'profiles') loadProfiles(); if (p === 'keybinds') loadKeybinds(); if (p === 'diag') loadDiag(); if (p === 'logs') loadLogs(); if (p === 'news') loadNews(false); if (p === 'home') loadGuard(); if (p === 'updates') loadUpdates();
   if (p === 'settings') document.dispatchEvent(new Event('krh-dash-settings'));
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.p)));
@@ -430,6 +436,16 @@ async function saveBg() {
 $('bUrl').addEventListener('change', saveBg); $('bDim').addEventListener('input', saveBg);
 $('bAdd').onclick = async () => { const r = await call('bg-add'); if (r && r.error) toast(r.error); else if (r && r.name) { toast('Added ' + r.name); $('bMode').value = 'file'; await loadBg(); $('bFile').value = r.name; saveBg(); } };
 $('clCache').onclick = async () => { await call('clear-cache'); toast('Cache cleared'); };
+$('bkMake').onclick = async () => {
+  const r = await call('backup-create');
+  if (r && r.ok) { $('bkInfo').textContent = 'Saved ' + r.files + ' files and ' + r.settings + ' settings groups to ' + r.path; toast('Backup saved'); }
+  else if (r && !r.canceled) toast('Backup failed: ' + (r.error || 'unknown error'));
+};
+$('bkRestore').onclick = async () => {
+  const r = await call('backup-restore');
+  if (r && r.ok) { $('bkInfo').textContent = 'Restored ' + r.files + ' files and ' + r.settings + ' settings groups. Restarting...'; toast('Backup restored, restarting'); setTimeout(() => call('restart-client'), 1400); }
+  else if (r && !r.canceled) toast('Restore failed: ' + (r.error || 'unknown error'));
+};
 $('clData').onclick = async () => { const r = await call('clear-data'); if (r && r.cleared) toast('Krunker data cleared'); };
 
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e; };
@@ -602,6 +618,27 @@ async function loadKeybinds() {
   r.rows.forEach((x) => { const tr = document.createElement('tr'); if (x.label.indexOf('dashboard') >= 0) tr.className = 'hl'; const c = document.createElement('td'); c.append(el('span', 'kbd', x.combo)); tr.append(el('td', '', x.label), c); b.append(tr); });
 }
 
+var lvReady = false;
+async function loadLogs() {
+  if (!lvReady) {
+    var info = await call('log-list');
+    var f = $('lvFilter'); f.innerHTML = '';
+    info.filters.forEach(function (x) { var o = document.createElement('option'); o.value = x.id; o.textContent = x.label; f.appendChild(o); });
+    var d = $('lvDay'); d.innerHTML = '';
+    info.files.forEach(function (n) { var o = document.createElement('option'); o.value = n; o.textContent = n.slice(9, 19) + (n === info.current ? ' (today)' : ''); d.appendChild(o); });
+    if (info.current) d.value = info.current;
+    lvReady = true;
+  }
+  $('lvText').textContent = 'Loading...';
+  var r = await call('log-read', { file: $('lvDay').value, filter: $('lvFilter').value, query: $('lvQuery').value });
+  $('lvText').textContent = r.error ? r.error : (r.text || '(no lines match)');
+  $('lvInfo').textContent = r.error ? '' : ('Showing the last ' + r.shown + ' of ' + r.matched + ' matching lines (' + r.total + ' lines in the part of the file that was read).');
+  $('lvText').scrollTop = $('lvText').scrollHeight;
+}
+$('lvRefresh').onclick = loadLogs; $('lvFilter').onchange = loadLogs; $('lvDay').onchange = loadLogs;
+$('lvQuery').onkeydown = function (e) { if (e.key === 'Enter') loadLogs(); };
+$('lvCopy').onclick = async function () { await call('copy-text', $('lvText').textContent); toast('Copied'); };
+$('lvOpen').onclick = function () { call('folder', 'logs'); };
 async function loadDiag() { $('dgText').textContent = 'Loading...'; const r = await call('diag'); $('dgText').textContent = r.text; }
 $('dgRefresh').onclick = loadDiag; $('dgCopy').onclick = async () => { await call('diag-copy'); toast('Report copied'); }; $('dgLogs').onclick = () => call('folder', 'logs'); $('lgOpen').onclick = () => call('folder', 'logs');
 

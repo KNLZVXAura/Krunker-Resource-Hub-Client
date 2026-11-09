@@ -110,6 +110,20 @@ export function createRowShell(
   return { row, control };
 }
 
+/** Shows (or clears) a small warning line under a row's description. Used for hotkey conflicts. */
+export function setRowWarning(row: HTMLElement, message: string | null): void {
+  const main = row.querySelector('.krh-row-main');
+  if (!main) return;
+  let warn = main.querySelector('.krh-key-warn') as HTMLElement | null;
+  if (!message) { warn?.remove(); return; }
+  if (!warn) {
+    warn = document.createElement('div');
+    warn.className = 'krh-key-warn';
+    main.appendChild(warn);
+  }
+  warn.textContent = message;
+}
+
 /** A non-interactive row (info text, credits) with no control slot. */
 export function createInfoRow(descHtml: string): HTMLElement {
   const row = document.createElement('div');
@@ -137,13 +151,15 @@ export function createGroup(body: HTMLElement, label?: string): HTMLElement {
 }
 
 // ── Keybind rows ──
-export function createKeybindRow(label: string, desc: string, currentBind: Keybind, onBind: (bind: Keybind) => void, safety?: number, instant?: boolean): HTMLElement {
+export function createKeybindRow(label: string, desc: string, currentBind: Keybind, onBind: (bind: Keybind) => void, safety?: number, instant?: boolean, validate?: (bind: Keybind) => string | null): HTMLElement {
   const { row, control } = createRowShell(label, escapeHtml(desc), { safety, instant });
+  if (validate) setRowWarning(row, validate(currentBind));
   control.innerHTML = '<span class="krh-keyIcon">' + escapeHtml(keybindDisplayString(currentBind)) + '</span>';
   const keyEl = control.querySelector('.krh-keyIcon') as HTMLElement;
   keyEl.addEventListener('click', () => {
     openKeybindDialog(label).then((newBind) => {
       keyEl.textContent = keybindDisplayString(newBind);
+      if (validate) setRowWarning(row, validate(newBind));
       onBind(newBind);
     });
   });
@@ -158,13 +174,17 @@ export function createSimpleKeyRow(opts: {
   onChange: (value: string) => void;
   safety?: number;
   instant?: boolean;
+  /** Returns a warning for a key (for example a hotkey conflict) or null. */
+  validate?: (value: string) => string | null;
 }): HTMLElement {
   const { row, control } = createRowShell(opts.label, escapeHtml(opts.desc), { safety: opts.safety, instant: opts.instant });
+  if (opts.validate) setRowWarning(row, opts.validate(opts.value));
   control.innerHTML = '<span class="krh-keyIcon">' + escapeHtml((opts.value || '?').toUpperCase()) + '</span>';
   const keyEl = control.querySelector('.krh-keyIcon') as HTMLElement;
   keyEl.addEventListener('click', () => {
     openKeybindDialog(opts.label, { simple: true }).then((bind) => {
       keyEl.textContent = bind.key.toUpperCase();
+      if (opts.validate) setRowWarning(row, opts.validate(bind.key));
       opts.onChange(bind.key);
     });
   });
@@ -294,6 +314,8 @@ export function createTextRow(opts: {
   instant?: boolean;
   refreshOnly?: boolean;
   restart?: boolean;
+  /** Returns a warning for the typed value (for example a hotkey conflict) or null. Checked while typing. */
+  validate?: (value: string) => string | null;
 }): { row: HTMLElement; input: HTMLInputElement } {
   const { row, control } = createRowShell(opts.label, escapeHtml(opts.desc), opts);
   const input = document.createElement('input');
@@ -301,6 +323,11 @@ export function createTextRow(opts: {
   input.className = 'krh-input';
   if (opts.placeholder) input.placeholder = opts.placeholder;
   input.value = opts.value || '';
+  if (opts.validate) {
+    const check = opts.validate;
+    setRowWarning(row, check(input.value.trim()));
+    input.addEventListener('input', () => setRowWarning(row, check(input.value.trim())));
+  }
   input.addEventListener('change', () => {
     opts.onChange(input.value.trim());
     if (opts.restart) onSettingChanged('restart');

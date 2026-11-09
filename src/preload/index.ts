@@ -48,6 +48,10 @@ import { setAccountEndMessage } from './end-message';
 import { installEscapeLockRelease } from './escape-lock';
 import { setLiveAccuracy } from './live-accuracy';
 import { setPerfHud } from './perf-hud';
+import { setNetHud } from './net-hud';
+import { setAutoProfiles } from './auto-profiles';
+import { setFpsSampler } from './fps-sampler';
+import { setPlayMonitor } from './play-monitor';
 import { initNameColors } from './name-colors';
 import { setHiddenMenu } from './menu-hider';
 import { initSuspectPing } from './kpd-call';
@@ -378,6 +382,10 @@ ipcRenderer.on('main_did-finish-load', () => {
         if (ex.accountEndMessage) void setAccountEndMessage(true);
         if (ex.liveAccuracy?.enabled) setLiveAccuracy(true, ex.liveAccuracy.placement);
         if (ex.perfHud) setPerfHud(ex.perfHud);
+        if (ex.netHud) setNetHud(ex.netHud);
+        setFpsSampler(ex.fpsStats?.enabled ?? true);
+        setPlayMonitor(ex.playLog?.enabled ?? true);
+        if (ex.autoProfiles?.enabled) setAutoProfiles(ex.autoProfiles, ex.settingPresets, ex.crosshair);
         setServerFilter(ex.serverFilter?.enabled === true, ex.serverFilter?.words ?? '');
         if (ex.gameLoop?.enabled) setGameLoop(ex.gameLoop);
         if (ex.nameColors) initNameColors(ex.nameColors);
@@ -387,6 +395,8 @@ ipcRenderer.on('main_did-finish-load', () => {
           enabled: ex.sessionStats?.enabled ?? true,
           key: ex.sessionStats?.key ?? 'Ctrl+Alt+K',
           autoStreak: ex.instantReplay?.enabled ? (ex.instantReplay.autoStreak || 0) : 0,
+          dailyKillGoal: ex.sessionStats?.dailyKillGoal ?? 0,
+          breakMinutes: ex.sessionStats?.breakMinutes ?? 0,
         });
         initLayoutEditor(ex.layoutEditorKey);
         if (ex.instantReplay?.enabled) initReplayKey(ex.instantReplay.key || 'Ctrl+Alt+R');

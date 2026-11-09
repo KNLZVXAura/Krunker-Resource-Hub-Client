@@ -15,11 +15,11 @@ KRH Client is the official client of the [Krunker Resource Hub](https://krunker-
 
 | File | For |
 | --- | --- |
-| `KRH.Client-3.0.2-Setup.exe` | Windows 64-bit, installer |
-| `KRH.Client-3.0.2-Setup.msi` | Windows 64-bit, MSI installer (per-user or all users) |
-| `KRH.Client-3.0.2-Portable.exe` | Windows 64-bit, no installation |
-| `KRH.Client-3.0.2-linux-x64.deb` | Debian, Ubuntu, Mint |
-| `KRH.Client-3.0.2-linux-x64.AppImage` | Linux, run `chmod +x` first |
+| `KRH.Client-4.0.0-Setup.exe` | Windows 64-bit, installer |
+| `KRH.Client-4.0.0-Setup.msi` | Windows 64-bit, MSI installer (per-user or all users) |
+| `KRH.Client-4.0.0-Portable.exe` | Windows 64-bit, no installation |
+| `KRH.Client-4.0.0-linux-x64.deb` | Debian, Ubuntu, Mint |
+| `KRH.Client-4.0.0-linux-x64.AppImage` | Linux, run `chmod +x` first |
 
 The builds are not code-signed, so Windows SmartScreen may show an "Unknown publisher" warning on first launch. Check the SHA-256 checksums on the release page before running a download.
 
@@ -125,7 +125,30 @@ The builds are not code-signed, so Windows SmartScreen may show an "Unknown publ
 - **Discord Presence+**: class icon, map picture and a Join button on your presence (needs matching Art Assets, see `DISCORD-ART.md`)
 - **Background updates**: the client starts at once, downloads a new version quietly and offers "Restart to update" in the KRH Hub (optionally installs when you close it)
 - **Instant replay**: keeps the last 10-120 seconds in memory and saves a clip on a key or at a kill streak
-- **Session stats**: kills, deaths, play time, matches and maps for the session and all time, kept on your computer, with a summary when you leave the game
+- **Session stats**: kills, deaths, play time, matches and maps for the session and all time, plus K/D per class, K/D per map and a 7-day kill chart, kept on your computer, with a summary when you leave the game
+- **Network HUD** (4.0.0): ping, average, jitter, packet loss and a 60-second graph on a key (`Ctrl+Alt+H`), with a region tip when another region measures much faster. It only reads numbers from the existing ping measurement and never changes your region
+- **Hotkey conflict warnings** (4.0.0): the key fields in Settings warn when a combination is already used by another feature
+- **Script Health** (4.0.0): Settings > Userscripts shows how every script is doing (running, failed, skipped, hints from its code, a warning when two scripts wrap WebSocket)
+- **Auto Profiles** (4.0.0): rules by class, mode, map, server region and game type, shareable as codes, that switch a Sensitivity preset, a FOV preset, the crosshair and extra CSS files while you play
+- **Ping History** (4.0.0): average ping per region and hour of the day, to see which region is usually fastest for you
+- **Automatic backups** (4.0.0): a backup is saved before an update is installed and on a daily or weekly schedule (newest 3 of each kept), with a Restore list in Settings > Extras and an optional second copy in a folder you choose
+- **Ready To Play** (4.0.0): one check before a session (connection, scripts, Safe Mode, performance drops, FPS settings)
+- **Performance Changes** (4.0.0): a quiet notice when FPS on a map or ping to a region is clearly lower than last week
+- **Replay Clips** (4.0.0): clips named after map, class and kill streak, with a gallery to open, rename and delete them
+- **Restore preview** (4.0.0): the restore confirmation shows which settings and files would change
+- **Scripts changed outside the client** (4.0.0): a notice and a list when a userscript was edited, added or removed by something else
+- **Earlier versions** (4.0.0): go back to a previous release from Settings > Extras (installed Windows build)
+- **Session labels** (4.0.0): label sessions (ranked, scrim ...) and see the statistics per label
+- **Storage** (4.0.0): disk use of the client and cleaning of old logs, backups and replay clips
+- **Weekly summary** (4.0.0): a quiet notification on the first start of a week
+- **Play Log and Connection Journal** (4.0.0): K/D by ping range, latest rounds, and a journal of disconnects and ping spikes you can copy for your provider
+- **Logs page** (4.0.0): the client log in the dashboard with filters and search
+- **Network Doctor** (4.0.0): one test that says whether the problem is your connection, your DNS, the route to a region or just distance
+- **FPS by map and class** (4.0.0): average FPS and 1% low per map and class, measured with a light counter during matches
+- **Settings history with Undo** (4.0.0): a list of recent settings changes, each with an Undo button
+- **Find The Problem Script** (4.0.0): switches scripts off in halves to name the script that causes a problem
+- **Daily goal and break reminder** (4.0.0): a kills-per-day goal and a break message after long play, plus a comparison with your average in the session summary
+- **Backup and restore** (4.0.0): Dashboard > Maintenance saves your client settings, userscripts, custom CSS, built-in script preferences and stats in one JSON file (never saved accounts or the swapper folder). Only restore backups you made yourself
 - **Overlay layout editor**: drag the stat counters, Spotify card and Twitch chat where you want them
 - **Streamer mode**: hides your Discord presence, saved accounts and the Spotify card with one key
 - **Safe Mode**: after repeated crashes (or `--safe-mode`) the client offers to start without userscripts, swapper, themes and extras, or to reset the settings with a backup
@@ -218,6 +241,7 @@ The game hotkeys can be rebound in the settings. The tab shortcuts (`Ctrl+T`/`W`
 | `Ctrl+Alt+M` | Streamer mode on / off (configurable) |
 | `Ctrl+Alt+R` | Save an instant replay clip (configurable, needs Instant Replay on) |
 | `Ctrl+Alt+K` | Session stats panel (configurable) |
+| `Ctrl+Alt+H` | Network HUD: ping, jitter, packet loss (configurable) |
 | `Ctrl+Alt+L` | Overlay layout editor (configurable) |
 | `F1` | Chat Logs window (configurable in Settings > Extras) |
 | `F2` | Quick Play tile picker (configurable) |

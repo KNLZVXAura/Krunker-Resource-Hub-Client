@@ -17,11 +17,26 @@ import {
 } from './settings-controls';
 import { setHiddenMenu, HIDE_ITEMS } from './menu-hider';
 import { setCrosshair } from './crosshair';
-import { buildV11Section } from './settings-v11';
+import { buildV11Section, shareCode } from './settings-v11';
 import { setClassicSocial, startHidePopups, stopHidePopups, setCleanMenu, setSelectableChat, setQuickClassPicker, setClassicMenu } from './menu-tweaks';
 import { setMotionBlur } from './motion-blur';
 import { setLiveAccuracy } from './live-accuracy';
 import { setPerfHud } from './perf-hud';
+import { setNetHud } from './net-hud';
+import { checkBind, checkCombo, noteHotkey } from './hotkey-check';
+import { setAutoProfiles } from './auto-profiles';
+import { publishScriptHealth } from './userscripts';
+import { AUTO_PROFILE_LIMIT, ruleSummary } from '../shared/auto-profiles';
+import { cleanFpsStats, summariseFps } from '../shared/fps-stats';
+import { BIN_LABELS as PING_BIN_LABELS } from '../shared/play-log';
+import { setPlayMonitor } from './play-monitor';
+import { REGION_NAMES } from '../shared/ping-history';
+import type { DoctorResult } from '../shared/net-doctor';
+import type { ReadyResult } from '../shared/ready-check';
+import { sizeText as storageSize } from '../shared/storage';
+import type { StorageEntry } from '../shared/storage';
+import { setFpsSampler } from './fps-sampler';
+import { cleanHistory as cleanPingHistory, hourLabel as pingHourLabel, rankForHour as rankPingsForHour, summarise as summarisePings } from '../shared/ping-history';
 import { escapeHtml } from './utils';
 import { CROSSHAIR_IMAGE_MAX_BYTES, cleanCrosshairImage } from '../shared/crosshair-image';
 import { capturePreset, normalisePresets, planPreset, presetName, PRESET_LIMIT, PRESET_SCOPES, summarisePreset } from '../shared/presets';
@@ -161,47 +176,47 @@ export function buildGeneralSection(
   hotkeysGroup.appendChild(createKeybindRow('Toggle Fullscreen', 'Fullscreen the game window (default F11)', bag.binds.fullscreenToggle, (b) => {
     bag.binds.fullscreenToggle = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-fullscreenToggle', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Screenshot Area', 'Select just the part you want to capture, like the Snipping Tool: the game freezes, drag a box, release to copy it (default Shift+F9). Esc or right-click cancels', bag.binds.screenshotArea, (b) => {
     bag.binds.screenshotArea = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-screenshotArea', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Screenshot', 'Copy the whole game view to your clipboard (default F9)', bag.binds.screenshot, (b) => {
     bag.binds.screenshot = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-screenshot', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Record Gameplay', 'Start / stop recording the game window to a video file (default F8)', bag.binds.record, (b) => {
     bag.binds.record = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-record', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Pause / Resume Recording', 'Pause the recording you are making, press again to continue in the same file (default F7)', bag.binds.recordPause, (b) => {
     bag.binds.recordPause = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-recordPause', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Show / Hide KRH Dashboard', 'Show the dashboard over the game, press again to hide it (default Ctrl+Shift+D)', bag.binds.dashboard, (b) => {
     bag.binds.dashboard = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-dashboard', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Open / Hide KRH Hub', 'Bring the KRH window up over the game without closing the game, press again to hide it (default Ctrl+H)', bag.binds.hubToggle, (b) => {
     bag.binds.hubToggle = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-hubToggle', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Open Krunker Social', 'Open krunker.io/social.html in a tab, or bring it forward if it is already open (default Ctrl+S)', bag.binds.openSocial, (b) => {
     bag.binds.openSocial = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-openSocial', b)));
 
   hotkeysGroup.appendChild(createKeybindRow('Open Krunker Editor', 'Open krunker.io/editor.html in a tab, or bring it forward if it is already open (default Ctrl+E)', bag.binds.openEditor, (b) => {
     bag.binds.openEditor = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-openEditor', b)));
 
   const shotsGroup = createGroup(body, 'Screenshots');
 
@@ -1603,11 +1618,11 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
   hkGroup.appendChild(createKeybindRow('Matchmaker Hotkey', 'Key to trigger the custom matchmaker', bag.binds.matchmaker, (b) => {
     bag.binds.matchmaker = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-matchmaker', b)));
   hkGroup.appendChild(createKeybindRow('Matchmaker Cancel', 'Key to dismiss the matchmaker popup', bag.binds.matchmakerCancel, (b) => {
     bag.binds.matchmakerCancel = b;
     bag.saveBinds();
-  }, undefined, true));
+  }, undefined, true, (b) => checkBind('bind-matchmakerCancel', b)));
 
   // Quick Play key (F2 by default): same value as Extras > Quick Play Key, now rebindable right here.
   const qpRowHolder = document.createElement('div');
@@ -1619,7 +1634,8 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
       desc: 'Key that opens the Quick Play window (matchmaker tiles, raids, Trade Plaza, ARG). Default: F2',
       value: ex.quickPlayKey || 'F2',
       instant: true,
-      onChange: (k) => { ex.quickPlayKey = k; void ipcRenderer.invoke('set-config', 'extras', ex); },
+      validate: (k) => checkCombo('extra-quickPlay', k),
+      onChange: (k) => { ex.quickPlayKey = k; noteHotkey('extra-quickPlay', k); void ipcRenderer.invoke('set-config', 'extras', ex); },
     }));
   }).catch(() => { /* config unavailable: row skipped */ });
 
@@ -1643,12 +1659,30 @@ export function buildMatchmakerSection(body: HTMLElement, mmConf: any, bag: Sett
     onChange: (v) => { mm.minRemainingTime = v; saveMM(); },
   }));
 
-  filtersGroup.appendChild(createCheckboxGrid({
+  const regionGrid = createCheckboxGrid({
     header: 'Regions (none selected = all)',
     items: MATCHMAKER_REGIONS.map(r => ({ value: r, label: MATCHMAKER_REGION_NAMES[r] || r })),
     selected: mm.regions,
     onChange: () => saveMM(),
-  }));
+  });
+  filtersGroup.appendChild(regionGrid);
+  // Mark the regions that are usually fastest for you around this hour (from Settings > Extras > Ping History). Only a mark:
+  // which regions are searched stays your choice.
+  void ipcRenderer.invoke('ping-history-get').then((res: { history?: unknown; hour?: number } | null) => {
+    if (!res) return;
+    const hour = typeof res.hour === 'number' ? res.hour : new Date().getHours();
+    const ranked = rankPingsForHour(cleanPingHistory(res.history), hour);
+    if (!ranked.length) return;
+    const labels = regionGrid.querySelectorAll('.krh-opt');
+    MATCHMAKER_REGIONS.forEach((code, i) => {
+      const r = ranked.find((x) => x.code === code);
+      const name = labels[i]?.querySelector('.krh-opt-name');
+      if (!r || !name) return;
+      name.textContent = (r === ranked[0] ? '\u2605 ' : '') + (MATCHMAKER_REGION_NAMES[code] || code) + ' \u00B7 ~' + Math.round(r.avg) + ' ms';
+      (labels[i] as HTMLElement).title = r === ranked[0] ? 'Usually the fastest region for you around ' + pingHourLabel(hour) : 'Usually about ' + Math.round(r.avg) + ' ms for you around ' + pingHourLabel(hour);
+    });
+    filtersGroup.insertBefore(createInfoRow('\u2605 marks the region that is usually fastest for you around ' + pingHourLabel(hour) + ', with the typical ping, from Settings > Extras > Ping History. It only marks: the regions that are searched are still your choice above.'), regionGrid.nextSibling);
+  }).catch(() => { /* no history yet */ });
 
   filtersGroup.appendChild(createCheckboxGrid({
     header: 'Gamemodes (none selected = every standard mode)',
@@ -1939,6 +1973,7 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     settingPresets: normalisePresets(exConf?.settingPresets),
     liveAccuracy: { ...DEFAULT_CONFIG.extras.liveAccuracy, ...(exConf?.liveAccuracy || {}) },
     perfHud: { ...DEFAULT_CONFIG.extras.perfHud, ...(exConf?.perfHud || {}) },
+    netHud: { ...DEFAULT_CONFIG.extras.netHud, ...(exConf?.netHud || {}) },
     serverFilter: { ...DEFAULT_CONFIG.extras.serverFilter, ...(exConf?.serverFilter || {}) },
     gameLoop: { ...DEFAULT_CONFIG.extras.gameLoop, ...(exConf?.gameLoop || {}) },
     rpcRich: { ...DEFAULT_CONFIG.extras.rpcRich, ...(exConf?.rpcRich || {}) },
@@ -1963,7 +1998,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     label: 'Chat Filter Key',
     desc: 'Key that cycles all, players, kills, server and unboxing (a key name such as F3; empty = off)',
     value: ex.chatFilterKey, placeholder: 'F3', refreshOnly: true,
-    onChange: (v) => { ex.chatFilterKey = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-chatFilter', v),
+    onChange: (v) => { ex.chatFilterKey = v.trim(); noteHotkey('extra-chatFilter', v); save(); },
   }).row);
   chat.appendChild(createToggleRow({
     label: 'Chat Logs',
@@ -1975,7 +2011,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     label: 'Chat Logs Key',
     desc: 'Key that opens and closes the Chat Logs window',
     value: ex.chatLogsKey, placeholder: 'F1', refreshOnly: true,
-    onChange: (v) => { ex.chatLogsKey = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-chatLogs', v),
+    onChange: (v) => { ex.chatLogsKey = v.trim(); noteHotkey('extra-chatLogs', v); save(); },
   }).row);
 
   // ── Game menu ──
@@ -1996,7 +2033,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     label: 'Quick Play Key',
     desc: 'Key that opens the Quick Play tile picker (regions, gamemodes and maps for the custom matchmaker)',
     value: ex.quickPlayKey, placeholder: 'F2', refreshOnly: true,
-    onChange: (v) => { ex.quickPlayKey = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-quickPlay', v),
+    onChange: (v) => { ex.quickPlayKey = v.trim(); noteHotkey('extra-quickPlay', v); save(); },
   }).row);
   menu.appendChild(createToggleRow({
     label: 'Auto Find After Disconnect',
@@ -2144,7 +2182,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
   vis.appendChild(createTextRow({
     label: 'Frame-Time HUD Key', desc: 'Key that shows or hides an FPS counter with 1% and 0.1% lows (a key name such as F10; empty = off). Adapted from NM/NZ Client.',
     value: ex.perfHud.key, placeholder: 'F10', instant: true,
-    onChange: (v) => { ex.perfHud.key = v.trim(); phApply(); },
+    validate: (v) => checkCombo('extra-perfHud', v),
+    onChange: (v) => { ex.perfHud.key = v.trim(); noteHotkey('extra-perfHud', v); phApply(); },
   }).row);
   vis.appendChild(createSelectRow({
     label: 'Frame-Time HUD Corner', desc: 'Where the counter sits',
@@ -2162,6 +2201,29 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     label: 'Frame-Time HUD On At Start', desc: 'Show the counter as soon as the game loads (takes effect the next launch)',
     checked: ex.perfHud.startOn, refreshOnly: true,
     onChange: (v) => { ex.perfHud.startOn = v; phApply(); },
+  }));
+  const nhApply = (): void => { save(); setNetHud(ex.netHud); };
+  vis.appendChild(createTextRow({
+    label: 'Network HUD Key', desc: 'Key combination that shows or hides ping, jitter, packet loss and a small graph (for example Ctrl+Alt+H; empty = off). Needs a game to be running.',
+    value: ex.netHud.key, placeholder: 'Ctrl+Alt+H', instant: true,
+    validate: (v) => checkCombo('extra-netHud', v),
+    onChange: (v) => { ex.netHud.key = v.trim(); noteHotkey('extra-netHud', v); nhApply(); },
+  }).row);
+  vis.appendChild(createSelectRow({
+    label: 'Network HUD Corner', desc: 'Where the network readout sits',
+    options: [{ value: 'top-left', label: 'Top left' }, { value: 'top-right', label: 'Top right' }, { value: 'bottom-left', label: 'Bottom left' }, { value: 'bottom-right', label: 'Bottom right' }],
+    value: ex.netHud.corner, instant: true,
+    onChange: (v) => { ex.netHud.corner = v as ExtrasConfig['netHud']['corner']; nhApply(); },
+  }));
+  vis.appendChild(createToggleRow({
+    label: 'Network HUD Region Tip', desc: 'When your ping stays high, the HUD names a region that measured clearly faster from your computer',
+    checked: ex.netHud.suggestRegion, instant: true,
+    onChange: (v) => { ex.netHud.suggestRegion = v; nhApply(); },
+  }));
+  vis.appendChild(createToggleRow({
+    label: 'Network HUD On At Start', desc: 'Show the readout as soon as the game loads (takes effect the next launch)',
+    checked: ex.netHud.startOn, refreshOnly: true,
+    onChange: (v) => { ex.netHud.startOn = v; nhApply(); },
   }));
   vis.appendChild(createToggleRow({
     label: 'Quick Class Picker',
@@ -2329,6 +2391,636 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
     );
     presetGroup.appendChild(row.row);
   }
+
+  // ── Automatic backups: before updates and on a schedule, with a one-click restore list ──
+  if (typeof ex.autoBackup !== 'boolean') ex.autoBackup = true;
+  if (ex.backupSchedule !== 'off' && ex.backupSchedule !== 'daily' && ex.backupSchedule !== 'weekly') ex.backupSchedule = 'weekly';
+  const bkGroup = createGroup(body, 'Automatic Backups');
+  bkGroup.appendChild(createToggleRow({
+    label: 'Back Up Before Updating',
+    desc: 'Just before an update is installed, save your settings, userscripts, custom CSS and statistics into a backup file in the KRH Client folder (the newest 3 are kept). Not done in safe mode.',
+    checked: ex.autoBackup, instant: true,
+    onChange: (v) => { ex.autoBackup = v; save(); },
+  }));
+  bkGroup.appendChild(createSelectRow({
+    label: 'Scheduled Backup',
+    desc: 'Also save a backup by itself every day or every week while the client is used (the newest 3 are kept). The first one is made a minute and a half after the client starts.',
+    options: [{ value: 'off', label: 'Off' }, { value: 'daily', label: 'Every day' }, { value: 'weekly', label: 'Every week' }],
+    value: ex.backupSchedule, instant: true,
+    onChange: (v) => { ex.backupSchedule = v === 'daily' || v === 'weekly' ? v : 'off'; save(); },
+  }));
+  const copyInfo = createInfoRow('Copies go nowhere else: nothing is uploaded.');
+  const showCopyDir = async (): Promise<void> => {
+    let dir: string;
+    try { dir = String(await ipcRenderer.invoke('backup-copy-dir-get') || ''); } catch { dir = ''; }
+    const d = copyInfo.querySelector('.krh-row-desc');
+    const text = dir ? 'Every automatic backup is also copied to: ' + dir + ' (the newest 6 copies are kept there). If the folder is not available when a backup is made, the copy is skipped.' : 'No copy folder chosen. Pick one (for example a OneDrive or Dropbox folder) to get a second copy of every automatic backup outside the KRH Client folder. Nothing is uploaded by the client itself.';
+    if (d) d.textContent = text; else copyInfo.textContent = text;
+  };
+  bkGroup.appendChild(copyInfo);
+  bkGroup.appendChild(createButtonRow({
+    label: 'Copy Backups To A Folder', desc: 'Choose a folder that also gets a copy of every automatic backup.',
+    buttons: [
+      { label: 'Choose Folder', title: 'Pick the folder for the copies', onClick: () => {
+        void ipcRenderer.invoke('backup-copy-dir-pick').then((r: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+          if (r?.ok) showToast('Backup copies will go to that folder');
+          else if (r && !r.canceled) showToast(r.error || 'Could not use that folder');
+          return showCopyDir();
+        });
+      } },
+      { label: 'Copy Now', title: 'Copy the newest automatic backups to the folder now', onClick: () => {
+        void ipcRenderer.invoke('backup-copy-now').then((r: { ok?: boolean; count?: number; error?: string } | null) => {
+          showToast(r?.ok ? 'Copied ' + (r.count ?? 0) + ' backups' : (r?.error || 'Could not copy'));
+        });
+      } },
+      { label: 'Stop Copying', title: 'Stop making copies (the copies already there stay)', onClick: () => { void ipcRenderer.invoke('backup-copy-dir-clear').then(() => { showToast('Copying stopped'); return showCopyDir(); }); } },
+    ],
+  }).row);
+  void showCopyDir();
+  const bkHolder = document.createElement('div');
+  const fmtSize = (n: number): string => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+  const renderBackups = async (): Promise<void> => {
+    bkHolder.textContent = '';
+    let res: { items: Array<{ file: string; kind: string; version: string; at: number; size: number }> } | null;
+    try { res = await ipcRenderer.invoke('backup-list'); } catch { res = null; }
+    const items = res && Array.isArray(res.items) ? res.items : [];
+    if (!items.length) { bkHolder.appendChild(createInfoRow('No automatic backups yet.')); return; }
+    for (const b of items) {
+      const when = new Date(b.at);
+      bkHolder.appendChild(createButtonRow({
+        label: (b.kind === 'scheduled' ? 'Scheduled backup' : 'Before update') + ' · v' + b.version,
+        desc: when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' + fmtSize(b.size),
+        buttons: [{ label: 'Restore', title: 'Restore this backup (asks first, then restarts the client)', onClick: () => {
+          void ipcRenderer.invoke('backup-restore-file', b.file).then((r: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+            if (r?.ok) showToast('Backup restored, restarting');
+            else if (r && !r.canceled) showToast('Restore failed: ' + (r.error || 'unknown error'));
+          });
+        } }],
+      }).row);
+    }
+  };
+  bkGroup.appendChild(createButtonRow({
+    label: 'Saved Backups', desc: 'The automatic backups, newest first. Restore asks for confirmation, replaces files with the same name (nothing else is deleted) and restarts the client. Userscripts run inside the game, so only restore backups you made yourself.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh the list', onClick: () => { void renderBackups(); } },
+      { label: 'Open Folder', title: 'Open the backup folder', onClick: () => { void ipcRenderer.invoke('open-backup-folder'); } },
+    ],
+  }).row);
+  bkGroup.appendChild(bkHolder);
+  void renderBackups();
+
+  // ── Settings history with Undo ──
+  const histGroup = createGroup(body, 'Settings History');
+  const histHolder = document.createElement('div');
+  const renderHistory = async (): Promise<void> => {
+    histHolder.textContent = '';
+    let items: Array<{ id: string; at: number; key: string; label: string; fields: string[] }>;
+    try { items = (await ipcRenderer.invoke('settings-history-get')) as typeof items; } catch { items = []; }
+    if (!Array.isArray(items) || !items.length) { histHolder.appendChild(createInfoRow('No changes yet. Settings you change from now on show up here.')); return; }
+    for (const it of items.slice().reverse().slice(0, 15)) {
+      const when = new Date(it.at);
+      const what = it.fields.slice(0, 3).join(', ') + (it.fields.length > 3 ? ' and ' + (it.fields.length - 3) + ' more' : '');
+      histHolder.appendChild(createButtonRow({
+        label: it.label + (what ? ': ' + what : ''),
+        desc: when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        buttons: [{ label: 'Undo', title: 'Put this category back to how it was before this change (asks first, then restarts the client)', onClick: () => {
+          void ipcRenderer.invoke('settings-history-undo', it.id).then((r: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+            if (r?.ok) showToast('Change undone, restarting');
+            else if (r && !r.canceled) showToast(r.error || 'Could not undo');
+          });
+        } }],
+      }).row);
+    }
+  };
+  histGroup.appendChild(createButtonRow({
+    label: 'Recent Changes',
+    desc: 'Every time a settings category is saved, the value it had before is kept (on this computer only), so a wrong click can be undone without restoring a whole backup. Changes made within a few seconds of each other count as one. Undo asks first and restarts the client; later changes in the same category are undone with it. Accounts, window positions and the pack and streamer switches are not covered.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh the list', onClick: () => { void renderHistory(); } },
+      { label: 'Clear', title: 'Forget the list', onClick: () => { void ipcRenderer.invoke('settings-history-clear').then(() => renderHistory()); } },
+    ],
+  }).row);
+  histGroup.appendChild(histHolder);
+  void renderHistory();
+
+  // ── Ping history: which region was fastest at what time of day ──
+  const pingGroup = createGroup(body, 'Ping History');
+  const pingHolder = document.createElement('div');
+  const renderPingHistory = async (): Promise<void> => {
+    pingHolder.textContent = '';
+    let res: { history: unknown; hour: number } | null;
+    try { res = await ipcRenderer.invoke('ping-history-get'); } catch { res = null; }
+    const history = cleanPingHistory(res?.history);
+    const hour = typeof res?.hour === 'number' ? res.hour : new Date().getHours();
+    const rows = summarisePings(history);
+    if (!rows.length) { pingHolder.appendChild(createInfoRow('No data yet. A sample is added each time the client measures the region pings (at start-up when the matchmaker is on, and when you search for a game), at most one per region every 5 minutes.')); return; }
+    const now = rankPingsForHour(history, hour);
+    pingHolder.appendChild(createInfoRow(now.length
+      ? 'Around ' + pingHourLabel(hour) + ' the fastest region for you is usually <b>' + escapeHtml(now[0].name) + '</b> (' + Math.round(now[0].avg) + ' ms)' + (now[1] ? ', then ' + escapeHtml(now[1].name) + ' (' + Math.round(now[1].avg) + ' ms)' : '') + '.'
+      : 'Not enough samples for ' + pingHourLabel(hour) + ' yet (at least 3 are needed for an hour).'));
+    for (const r of rows) {
+      const hours = r.bestHour >= 0 ? ' Best around ' + pingHourLabel(r.bestHour) + (r.worstHour !== r.bestHour ? ', worst around ' + pingHourLabel(r.worstHour) : '') + '.' : '';
+      pingHolder.appendChild(createInfoRow('<b>' + escapeHtml(r.name) + '</b>: average ' + Math.round(r.avg) + ' ms from ' + r.samples + ' samples.' + hours));
+    }
+  };
+  pingGroup.appendChild(createButtonRow({
+    label: 'Ping History',
+    desc: 'Keeps the average ping of each region for every hour of the day, on this computer only, so you can see which region is usually fastest for you at what time. Old samples fade out over time.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void renderPingHistory(); } },
+      { label: 'Reset', title: 'Delete the saved ping history', onClick: () => { void ipcRenderer.invoke('ping-history-reset').then(() => renderPingHistory()); } },
+    ],
+  }).row);
+  pingGroup.appendChild(pingHolder);
+  void renderPingHistory();
+
+  // ── Play log: K/D by ping range and the latest rounds ──
+  if (!ex.playLog) ex.playLog = { enabled: true };
+  const plGroup = createGroup(body, 'Play Log');
+  const plHolder = document.createElement('div');
+  const renderPlayLog = async (): Promise<void> => {
+    plHolder.textContent = '';
+    let res: { rounds: Array<{ startAt: number; map: string; cls: string; seconds: number; kills: number; deaths: number; ping: number; fps: number }>; bins: Array<{ seconds: number; kills: number; deaths: number }>; lag: string } | null;
+    try { res = await ipcRenderer.invoke('play-log-get'); } catch { res = null; }
+    if (!res) { plHolder.appendChild(createInfoRow('Could not read the play log.')); return; }
+    plHolder.appendChild(createInfoRow('<b>Do I play worse with a high ping?</b> ' + escapeHtml(res.lag) + ' Many things change K/D (map, class, opponents), so this is a hint, not a verdict.'));
+    res.bins.forEach((b, i) => {
+      if (!b.seconds) return;
+      const kd = b.deaths > 0 ? b.kills / b.deaths : b.kills;
+      plHolder.appendChild(createInfoRow(escapeHtml(PING_BIN_LABELS[i]) + ': ' + Math.round(b.seconds / 60) + ' min, ' + b.kills + ' kills / ' + b.deaths + ' deaths' + (b.seconds >= 600 ? ', K/D ' + kd.toFixed(2) : ' (too little time for a K/D)')));
+    });
+    if (!res.rounds.length) { plHolder.appendChild(createInfoRow('No round yet. A round is a stretch of at least a minute on one map.')); return; }
+    plHolder.appendChild(createInfoRow('<b>Latest rounds</b> (a new round starts when the map changes or after a 3 minute break; Krunker gives no signal between matches, so a round can hold more than one match)'));
+    for (const r of res.rounds.slice(0, 15)) {
+      const when = new Date(r.startAt);
+      const kd = r.deaths > 0 ? r.kills / r.deaths : r.kills;
+      plHolder.appendChild(createInfoRow(escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + ' · <b>' + escapeHtml(r.map || 'unknown map') + '</b>' + (r.cls ? ' · ' + escapeHtml(r.cls) : '') + ' · ' + Math.round(r.seconds / 60) + ' min · ' + r.kills + '/' + r.deaths + ' (K/D ' + kd.toFixed(2) + ')' + (r.ping ? ' · ' + r.ping + ' ms' : '') + (r.fps ? ' · ' + r.fps + ' FPS' : '')));
+    }
+  };
+  plGroup.appendChild(createToggleRow({
+    label: 'Play Log And Connection Journal',
+    desc: 'While you are in a match the client takes a small sample every 10 seconds (map, class, the ping to the game server, kills and deaths since the last sample), only then and only while the page is visible. It feeds this log and the Connection Journal below. The ping is one small connection test to the game server every 10 seconds. Kills and deaths need the session statistics switched on. Everything stays on this computer.',
+    checked: ex.playLog.enabled, instant: true,
+    onChange: (v) => { ex.playLog.enabled = v; save(); setPlayMonitor(v); },
+  }));
+  plGroup.appendChild(createButtonRow({
+    label: 'K/D By Ping',
+    desc: 'Time, kills and deaths per ping range, and your latest rounds with their average ping and FPS.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void renderPlayLog(); } },
+      { label: 'Reset', title: 'Delete the play log', onClick: () => { void ipcRenderer.invoke('play-log-reset').then(() => renderPlayLog()); } },
+    ],
+  }).row);
+  plGroup.appendChild(plHolder);
+  void renderPlayLog();
+
+  // ── Connection journal: drops, ping spikes and silent stretches, with a seven-day graph ──
+  const cjGroup = createGroup(body, 'Connection Journal');
+  const cjHolder = document.createElement('div');
+  let cjReport = '';
+  const renderJournal = async (): Promise<void> => {
+    cjHolder.textContent = '';
+    let res: { graph: Array<{ day: string; drops: number; spikes: number; losses: number }>; events: Array<{ at: number; kind: string; text: string }>; report: string } | null;
+    try { res = await ipcRenderer.invoke('journal-get'); } catch { res = null; }
+    if (!res) { cjHolder.appendChild(createInfoRow('Could not read the journal.')); return; }
+    cjReport = res.report;
+    const max = Math.max(1, ...res.graph.map((d) => d.drops + d.spikes + d.losses));
+    const seg = (n: number, color: string): string => (n ? '<span style="display:inline-block;height:10px;width:' + Math.max(4, Math.round((n / max) * 160)) + 'px;background:' + color + ';border-radius:2px;margin-right:1px"></span>' : '');
+    cjHolder.appendChild(createInfoRow('<b>Last 7 days</b> <span class="krh-us-meta">red = disconnects, orange = ping spikes, yellow = no answer from the server</span>'));
+    for (const d of res.graph) {
+      const total = d.drops + d.spikes + d.losses;
+      cjHolder.appendChild(createInfoRow(escapeHtml(d.day.slice(5)) + ' ' + (total ? seg(d.drops, '#ff7b7b') + seg(d.spikes, '#ffb454') + seg(d.losses, '#e8d44d') + ' ' + d.drops + ' / ' + d.spikes + ' / ' + d.losses : '<span class="krh-us-meta">nothing noted</span>')));
+    }
+    if (res.events.length) {
+      cjHolder.appendChild(createInfoRow('<b>Latest events</b>'));
+      for (const e of res.events) {
+        const when = new Date(e.at);
+        cjHolder.appendChild(createInfoRow(escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + ' · ' + escapeHtml(e.text)));
+      }
+    } else cjHolder.appendChild(createInfoRow('No event yet. Play with the Play Log switched on and anything that goes wrong shows up here.'));
+  };
+  cjGroup.appendChild(createButtonRow({
+    label: 'Connection Journal',
+    desc: 'Notes every unexpected disconnect, every ping spike (at least 150 ms and 2.5 times the usual ping) and every stretch where the game server did not answer twice in a row, with the time and the region. Copy it as text to show your provider or a server admin: "it happens every evening around nine" is much stronger with times.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void renderJournal(); } },
+      { label: 'Copy For Provider', title: 'Copy the last 14 days as plain text', onClick: () => {
+        void renderJournal().then(() => ipcRenderer.invoke('dash:copy-text', cjReport)).then((ok: unknown) => showToast(ok === true ? 'Journal copied' : 'Could not copy the journal'));
+      } },
+      { label: 'Clear', title: 'Delete the journal', onClick: () => { void ipcRenderer.invoke('journal-clear').then(() => renderJournal()); } },
+    ],
+  }).row);
+  cjGroup.appendChild(cjHolder);
+  void renderJournal();
+
+  // ── Weekly summary ──
+  if (typeof ex.weeklySummary !== 'boolean') ex.weeklySummary = true;
+  const wkGroup = createGroup(body, 'Weekly Summary');
+  const wkHolder = document.createElement('div');
+  const renderWeekly = async (): Promise<void> => {
+    wkHolder.textContent = '';
+    let res: { preview: string; last: string; lastWeekStart: string } | null;
+    try { res = await ipcRenderer.invoke('weekly-summary-get'); } catch { res = null; }
+    if (!res) { wkHolder.appendChild(createInfoRow('Could not read the summary.')); return; }
+    if (res.preview) for (const l of res.preview.split('\n')) wkHolder.appendChild(createInfoRow(escapeHtml(l)));
+    else wkHolder.appendChild(createInfoRow('Last week had too little play for a summary (at least 10 minutes in a session that started that week).'));
+  };
+  wkGroup.appendChild(createToggleRow({
+    label: 'Weekly Summary Notification',
+    desc: 'On the first start of each week, a quiet notification sums up last week from your statistics: play time, K/D compared with the week before, your best map (needs enough kills and deaths on it) and clear FPS or ping drops. Nothing is shown for a week without play.',
+    checked: ex.weeklySummary, instant: true,
+    onChange: (v) => { ex.weeklySummary = v; save(); },
+  }));
+  wkGroup.appendChild(createButtonRow({
+    label: 'Last Week', desc: 'The summary as it would be written now.',
+    buttons: [{ icon: 'refresh', label: 'Show', title: 'Show last week\'s summary', onClick: () => { void renderWeekly(); } }],
+  }).row);
+  wkGroup.appendChild(wkHolder);
+
+  // ── Performance changes: this week against last week ──
+  if (typeof ex.perfWarnings !== 'boolean') ex.perfWarnings = true;
+  const trendGroup = createGroup(body, 'Performance Changes');
+  const trendHolder = document.createElement('div');
+  const renderTrends = async (): Promise<void> => {
+    trendHolder.textContent = '';
+    let res: { findings: Array<{ text: string }>; haveBothWeeks: boolean; version: string; versionSince: number; changes: Array<{ at: number; label: string; fields: string[] }> } | null;
+    try { res = await ipcRenderer.invoke('perf-trends-get'); } catch { res = null; }
+    if (!res) { trendHolder.appendChild(createInfoRow('Could not read the trends.')); return; }
+    if (!res.haveBothWeeks) trendHolder.appendChild(createInfoRow('Not enough history yet: this needs play (FPS) or region ping rounds in both this week and last week.'));
+    else if (!res.findings.length) trendHolder.appendChild(createInfoRow('<span class="krh-health krh-health-ok">OK</span> Nothing got clearly worse than last week.'));
+    for (const f of res.findings) trendHolder.appendChild(createInfoRow('<span class="krh-health krh-health-warn">Check</span> ' + escapeHtml(f.text)));
+    const day = (ms: number): string => new Date(ms).toLocaleDateString();
+    if (res.version && res.versionSince > 0 && Date.now() - res.versionSince < 21 * 86_400_000) trendHolder.appendChild(createInfoRow('Client version ' + escapeHtml(res.version) + ' since ' + day(res.versionSince) + '.'));
+    if (res.changes.length) trendHolder.appendChild(createInfoRow('Settings changed in the last 7 days: ' + res.changes.map((c) => escapeHtml(c.label + (c.fields.length ? ' (' + c.fields.slice(0, 2).join(', ') + ')' : '') + ', ' + day(c.at))).join('; ') + '. Settings History above can undo them.'));
+  };
+  trendGroup.appendChild(createToggleRow({
+    label: 'Warn When Performance Gets Worse',
+    desc: 'A few minutes after the client starts, a quiet notification says if FPS on a map or ping to a region is clearly lower than last week (at least 15% and 10 FPS, or 25% and 15 ms, with enough measurements in both weeks). It never changes anything and shows each set of findings once.',
+    checked: ex.perfWarnings, instant: true,
+    onChange: (v) => { ex.perfWarnings = v; save(); },
+  }));
+  trendGroup.appendChild(createButtonRow({
+    label: 'This Week Against Last Week',
+    desc: 'Compares the average FPS per map (needs FPS By Map And Class switched on) and the ping per region with the week before. Changes in the list below the findings can point at the cause, but a drop can also come from the game, your drivers or other programs.',
+    buttons: [{ icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void renderTrends(); } }],
+  }).row);
+  trendGroup.appendChild(trendHolder);
+  void renderTrends();
+
+  // ── Storage: what the client keeps on the disk, with cleaning of old files it made itself ──
+  const stGroup = createGroup(body, 'Storage');
+  const stHolder = document.createElement('div');
+  const stDays = createSelect([{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: '180', label: '180 days' }], '90');
+  const renderStorage = async (): Promise<void> => {
+    stHolder.textContent = '';
+    stHolder.appendChild(createInfoRow('Measuring...'));
+    let list: StorageEntry[];
+    try { list = (await ipcRenderer.invoke('storage-report')) as StorageEntry[]; } catch { list = []; }
+    stHolder.textContent = '';
+    if (!Array.isArray(list) || !list.length) { stHolder.appendChild(createInfoRow('Could not measure the folders.')); return; }
+    const total = list.filter((e) => e.id !== 'clips').reduce((n, e) => n + e.bytes, 0);
+    stHolder.appendChild(createInfoRow('<b>Total</b>: ' + storageSize(total) + ' (the replay clips are part of the recordings folder).'));
+    for (const e of list) {
+      const buttons: Array<{ label: string; title: string; onClick: () => void }> = [];
+      if (e.clean === 'days') {
+        buttons.push({ label: 'Clean Old', title: 'Delete the files of this kind that are older than the chosen number of days (asks first, the newest are kept)', onClick: () => {
+          void ipcRenderer.invoke('storage-clean', e.id, Number(stDays.value)).then((r: { ok?: boolean; canceled?: boolean; count?: number; bytes?: number; message?: string; error?: string } | null) => {
+            if (r?.ok) { showToast(r.count ? 'Cleaned ' + r.count + ' files (' + storageSize(r.bytes ?? 0) + ')' : (r.message || 'Nothing to clean')); return renderStorage(); }
+            if (r && !r.canceled) showToast(r.error || 'Could not clean');
+            return undefined;
+          });
+        } });
+      } else if (e.clean === 'cache') {
+        buttons.push({ label: 'Empty Cache', title: 'Empty the web cache (asks first)', onClick: () => {
+          void ipcRenderer.invoke('storage-clean', 'cache').then((r: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+            if (r?.ok) { showToast('Web cache emptied'); return renderStorage(); }
+            if (r && !r.canceled) showToast(r.error || 'Could not empty the cache');
+            return undefined;
+          });
+        } });
+      }
+      if (e.openable) buttons.push({ label: 'Open Folder', title: 'Open the folder', onClick: () => { void ipcRenderer.invoke('storage-open', e.id); } });
+      stHolder.appendChild(createButtonRow({ label: e.label, desc: (e.partial ? 'more than ' : '') + storageSize(e.bytes) + ' · ' + e.files + (e.partial ? '+' : '') + ' files', buttons }).row);
+    }
+  };
+  const stDaysRow = createButtonRow({
+    label: 'Storage',
+    desc: 'What the client keeps on the disk. Cleaning only touches files the client made itself (logs, automatic backups, replay clips) that are older than the chosen number of days, always keeps the newest ones, and asks first with the count and the size. Clips go to the recycle bin. Your scripts, CSS, swapper files and other recordings are never cleaned here.',
+    buttons: [{ icon: 'refresh', label: 'Refresh', title: 'Measure again', onClick: () => { void renderStorage(); } }],
+  });
+  stDaysRow.control.insertBefore(stDays, stDaysRow.control.firstChild);
+  stGroup.appendChild(stDaysRow.row);
+  stGroup.appendChild(stHolder);
+  void renderStorage();
+
+  // ── Earlier versions: go back after a bad update ──
+  const rbGroup = createGroup(body, 'Earlier Versions');
+  const rbHolder = document.createElement('div');
+  let rbBusy = false;
+  const renderRollback = async (): Promise<void> => {
+    if (rbBusy) return;
+    rbBusy = true;
+    rbHolder.textContent = '';
+    rbHolder.appendChild(createInfoRow('Asking GitHub for earlier versions...'));
+    let res: { eligible: boolean; ok: boolean; releases: Array<{ version: string; fileSize: number }>; current?: string } | null;
+    try { res = await ipcRenderer.invoke('rollback-list'); } catch { res = null; }
+    rbBusy = false;
+    rbHolder.textContent = '';
+    if (!res) { rbHolder.appendChild(createInfoRow('Could not read the list.')); return; }
+    if (!res.eligible) {
+      rbHolder.appendChild(createInfoRow('Only the installed Windows version can go back by itself. For the portable, Linux and macOS builds, pick an earlier version on the releases page.'));
+      return;
+    }
+    if (!res.ok) { rbHolder.appendChild(createInfoRow('GitHub did not answer (it allows 60 requests an hour per address). Try again later, or use the releases page.')); return; }
+    if (!res.releases.length) { rbHolder.appendChild(createInfoRow('No earlier version with an installer was found.')); return; }
+    for (const r of res.releases) {
+      rbHolder.appendChild(createButtonRow({
+        label: 'Version ' + r.version,
+        desc: 'Installer about ' + Math.max(1, Math.round(r.fileSize / 1048576)) + ' MB. You run ' + (res.current ?? '') + '.',
+        buttons: [{ label: 'Go Back', title: 'Download this version and install it (asks first, saves a backup first)', onClick: () => {
+          showToast('Preparing version ' + r.version);
+          void ipcRenderer.invoke('rollback-install', r.version).then((x: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+            if (x && !x.ok && !x.canceled) showToast(x.error || 'Could not go back');
+          });
+        } }],
+      }).row);
+    }
+  };
+  rbGroup.appendChild(createButtonRow({
+    label: 'Go Back To An Earlier Version',
+    desc: 'If an update causes trouble, install an earlier release again. The client saves a backup of your settings first, checks the installer with its SHA-256, and closes itself to run it. The update prompt then skips the version you leave but still offers newer ones. Not tested on every Windows setup: if the installer refuses to go back, uninstall first and install the older version.',
+    buttons: [
+      { label: 'Show Earlier Versions', title: 'Ask GitHub which earlier versions exist', onClick: () => { void renderRollback(); } },
+      { label: 'Releases Page', title: 'Open all releases in the browser', onClick: () => { void ipcRenderer.invoke('rollback-open-releases'); } },
+    ],
+  }).row);
+  rbGroup.appendChild(rbHolder);
+
+  // ── Ready to play: one check before a session ──
+  const readyGroup = createGroup(body, 'Ready To Play');
+  const readyHolder = document.createElement('div');
+  let readyText = '';
+  let readyBusy = false;
+  const readyBadge = (l: string): string => '<span class="krh-health krh-health-' + (l === 'ok' ? 'ok' : l === 'bad' ? 'bad' : 'warn') + '">' + (l === 'ok' ? 'OK' : l === 'bad' ? 'Fix' : 'Check') + '</span> ';
+  const runReady = async (): Promise<void> => {
+    if (readyBusy) return;
+    readyBusy = true;
+    readyHolder.textContent = '';
+    readyHolder.appendChild(createInfoRow('Checking the connection, your scripts and your settings, about 10 seconds.'));
+    publishScriptHealth();
+    let res: ReadyResult | null;
+    try { await new Promise((r) => setTimeout(r, 300)); res = (await ipcRenderer.invoke('ready-check-run')) as ReadyResult; } catch { res = null; }
+    readyBusy = false;
+    readyHolder.textContent = '';
+    if (!res || !Array.isArray(res.items)) { readyHolder.appendChild(createInfoRow('The check could not run.')); return; }
+    readyHolder.appendChild(createInfoRow(readyBadge(res.level) + '<b>' + escapeHtml(res.headline) + '</b>'));
+    for (const it of res.items) readyHolder.appendChild(createInfoRow(readyBadge(it.level) + '<b>' + escapeHtml(it.area) + '</b>: ' + escapeHtml(it.text)));
+    readyText = res.headline + '\n' + res.items.map((it) => '- [' + it.area + '] ' + it.text).join('\n');
+  };
+  readyGroup.appendChild(createButtonRow({
+    label: 'Ready To Play',
+    desc: 'One check before a session: a short connection test, how your userscripts are doing (best with the game open), Safe Mode, a running script search, clear FPS or ping drops since last week and the settings that limit FPS. It only reads and reports; it never changes anything.',
+    buttons: [
+      { label: 'Check Now', title: 'Run the check (about 10 seconds)', onClick: () => { void runReady(); } },
+      { label: 'Copy Result', title: 'Copy the result as text', onClick: () => {
+        if (!readyText) { showToast('Run the check first'); return; }
+        void ipcRenderer.invoke('dash:copy-text', readyText).then(() => showToast('Result copied'));
+      } },
+    ],
+  }).row);
+  readyGroup.appendChild(readyHolder);
+
+  // ── Replay clips: the saved instant-replay clips, named after map, class and kill streak ──
+  const clipGroup = createGroup(body, 'Replay Clips');
+  const clipHolder = document.createElement('div');
+  type ClipItem = { file: string; label: string; at: number; sizeText: string; seconds: number };
+  const renderClips = async (): Promise<void> => {
+    clipHolder.textContent = '';
+    let items: ClipItem[];
+    try { items = (await ipcRenderer.invoke('clips-list')) as ClipItem[]; } catch { items = []; }
+    if (!Array.isArray(items) || !items.length) { clipHolder.appendChild(createInfoRow('No clips yet. Switch on Instant Replay and save a clip with its key (or automatically at a kill streak): it shows up here.')); return; }
+    for (const c of items) {
+      const when = new Date(c.at);
+      const { row, control } = createRowShell(c.label, escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' + c.sizeText + (c.seconds ? ' · ' + c.seconds + ' s' : '') + ' · ' + c.file));
+      const note = (msg: string): void => { showToast(msg); };
+      const startRename = (): void => {
+        const main = row.querySelector('.krh-row-main');
+        if (!main || main.querySelector('.krh-clip-rename')) return;
+        const box = document.createElement('div');
+        box.className = 'krh-clip-rename';
+        box.style.marginTop = '6px';
+        const input = document.createElement('input');
+        input.type = 'text'; input.className = 'krh-input'; input.value = c.label.replace(/ · /g, ' - '); input.maxLength = 80;
+        box.appendChild(input);
+        box.appendChild(makeButton({ label: 'Save Name', title: 'Rename the file', onClick: () => {
+          void ipcRenderer.invoke('clip-rename', c.file, input.value).then((r: { ok?: boolean; error?: string } | null) => {
+            if (r?.ok) { note('Clip renamed'); return renderClips(); }
+            note(r?.error || 'Could not rename'); return undefined;
+          });
+        } }));
+        main.appendChild(box);
+        input.focus(); input.select();
+      };
+      control.append(
+        makeButton({ label: 'Open', title: 'Play the clip with your video player', onClick: () => { void ipcRenderer.invoke('clip-open', c.file); } }),
+        makeButton({ label: 'Folder', title: 'Show the file in its folder', onClick: () => { void ipcRenderer.invoke('clip-reveal', c.file); } }),
+        makeButton({ label: 'Rename', title: 'Give the clip a name of your own (this renames the file)', onClick: startRename }),
+        makeButton({ label: 'Delete', title: 'Move the clip to the recycle bin (asks first)', onClick: () => {
+          void ipcRenderer.invoke('clip-delete', c.file).then((r: { ok?: boolean; canceled?: boolean; error?: string } | null) => {
+            if (r?.ok) { note('Clip moved to the recycle bin'); return renderClips(); }
+            if (r && !r.canceled) note(r.error || 'Could not delete');
+            return undefined;
+          });
+        } }),
+      );
+      clipHolder.appendChild(row);
+    }
+  };
+  clipGroup.appendChild(createButtonRow({
+    label: 'Saved Clips',
+    desc: 'New clips are named after the map, the class and the kill streak (for example Krunker_replay_..._Sandstorm_Hunter_7streak). The newest 100 are listed. Delete moves a clip to the recycle bin after asking; Rename changes the file name.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh the list', onClick: () => { void renderClips(); } },
+      { label: 'Open Folder', title: 'Open the recordings folder', onClick: () => { void ipcRenderer.invoke('open-recordings-folder'); } },
+    ],
+  }).row);
+  clipGroup.appendChild(clipHolder);
+  void renderClips();
+
+  // ── Network doctor: is it my connection, my DNS or the game servers? ──
+  const doctorGroup = createGroup(body, 'Network Doctor');
+  const doctorHolder = document.createElement('div');
+  let doctorText = '';
+  const levelBadge = (l: string): string => '<span class="krh-health krh-health-' + (l === 'ok' ? 'ok' : l === 'bad' ? 'bad' : 'warn') + '">' + (l === 'ok' ? 'OK' : l === 'bad' ? 'Problem' : 'Check') + '</span> ';
+  let doctorBusy = false;
+  const runDoctor = async (): Promise<void> => {
+    if (doctorBusy) return;
+    doctorBusy = true;
+    doctorHolder.textContent = '';
+    doctorHolder.appendChild(createInfoRow('Testing your connection, about 15 seconds. For the most honest result do not download or stream anything meanwhile.'));
+    let res: DoctorResult | null;
+    try { res = (await ipcRenderer.invoke('net-doctor-run')) as DoctorResult; } catch { res = null; }
+    doctorBusy = false;
+    doctorHolder.textContent = '';
+    if (!res || !Array.isArray(res.findings)) { doctorHolder.appendChild(createInfoRow('The test could not run.')); return; }
+    doctorHolder.appendChild(createInfoRow(levelBadge(res.level) + '<b>' + escapeHtml(res.headline) + '</b>'));
+    for (const f of res.findings) doctorHolder.appendChild(createInfoRow(levelBadge(f.level) + escapeHtml(f.text)));
+    doctorText = res.headline + '\n' + res.findings.map((f) => '- ' + f.text).join('\n');
+  };
+  doctorGroup.appendChild(createButtonRow({
+    label: 'Network Doctor',
+    desc: 'Tests DNS (krunker.io), a few well-known servers that have nothing to do with Krunker and the Krunker region servers, then says in plain words whether the problem is your connection, your DNS, the route to one region or just distance. It sends only small connection tests and keeps nothing.',
+    buttons: [
+      { label: 'Run Test', title: 'Run the connection test (about 15 seconds)', onClick: () => { void runDoctor(); } },
+      { label: 'Copy Result', title: 'Copy the result as text', onClick: () => {
+        if (!doctorText) { showToast('Run the test first'); return; }
+        void ipcRenderer.invoke('dash:copy-text', doctorText).then(() => showToast('Result copied'));
+      } },
+    ],
+  }).row);
+  doctorGroup.appendChild(doctorHolder);
+
+  // ── Auto profiles ──
+  if (!ex.autoProfiles) ex.autoProfiles = { enabled: false, rules: [] };
+  const auto = createGroup(body, 'Auto Profiles');
+  const cssNames = (text: string): string[] => text.split(',').map((n) => n.trim()).filter(Boolean).map((n) => (/\.css$/i.test(n) ? n : n + '.css')).slice(0, 8);
+  const apApply = (): void => { save(); setAutoProfiles(ex.autoProfiles, ex.settingPresets, ex.crosshair); };
+  auto.appendChild(createToggleRow({
+    label: 'Auto Profiles',
+    desc: 'Switch settings by themselves while you play. When the class, game mode or map matches a rule below, its sensitivity preset, FOV preset, crosshair and extra CSS files are applied. The most specific matching rule wins; a rule with no class, mode or map is the default. Nothing changes in the menu.',
+    checked: ex.autoProfiles.enabled, instant: true,
+    onChange: (v) => { ex.autoProfiles.enabled = v; apApply(); },
+  }));
+  const ruleHolder = document.createElement('div');
+  const renderRules = (): void => {
+    ruleHolder.textContent = '';
+    if (!ex.autoProfiles.rules.length) { ruleHolder.appendChild(createInfoRow('No rules yet. Fill in the fields above and press Add Rule.')); return; }
+    for (const rule of ex.autoProfiles.rules) {
+      ruleHolder.appendChild(createButtonRow({
+        label: rule.name, desc: ruleSummary(rule),
+        buttons: [
+          { label: 'Share', title: 'Copy a share code for this rule (with the presets it uses)', onClick: () => {
+            const sens = ex.settingPresets.find((p) => p.id === rule.sensPreset);
+            const fov = ex.settingPresets.find((p) => p.id === rule.fovPreset);
+            const { id: _id, ...plain } = rule;
+            void shareCode('autoprofile', rule.name, { rule: plain, presets: [sens, fov].filter(Boolean) });
+          } },
+          { label: 'Delete', title: 'Delete this rule', onClick: () => {
+            const i = ex.autoProfiles.rules.findIndex((r) => r.id === rule.id);
+            if (i < 0) return;
+            ex.autoProfiles.rules.splice(i, 1);
+            apApply(); renderRules(); showToast('Rule deleted: ' + rule.name);
+          } },
+        ],
+      }).row);
+    }
+  };
+  const apName = createTextRow({ label: 'Rule Name', desc: 'A name for the rule you add below (for example Sniper on Sandstorm).', value: '', placeholder: 'Sniper', instant: true, onChange: () => { /* read on Add */ } });
+  const apClass = createTextRow({ label: 'When Class Contains', desc: 'Part of the class name, not case-sensitive (Hunter, Trigger). Leave empty for any class.', value: '', placeholder: 'Hunter', instant: true, onChange: () => { /* read on Add */ } });
+  const apMode = createTextRow({ label: 'When Mode Contains', desc: 'Part of the game mode name (Free for All, Team Deathmatch). Leave empty for any mode.', value: '', placeholder: 'Free for All', instant: true, onChange: () => { /* read on Add */ } });
+  const apMap = createTextRow({ label: 'When Map Contains', desc: 'Part of the map name. Leave empty for any map.', value: '', placeholder: 'Sandstorm', instant: true, onChange: () => { /* read on Add */ } });
+  const apRegion = createSelect([{ value: '', label: 'Any region' }, ...Object.entries(REGION_NAMES).map(([code, name]) => ({ value: code, label: code + ' (' + name + ')' }))], '');
+  const apType = createSelect([{ value: '', label: 'Any game' }, { value: 'public', label: 'Public games' }, { value: 'custom', label: 'Custom games' }], '');
+  const whereRow = createButtonRow({ label: 'Server Region And Game Type', desc: 'The region is the start of the game id (FRA, SV, TOK ...). The game type only works when the game says whether a game is custom: if it does not, a rule that names a type never matches.', buttons: [] });
+  whereRow.control.append(apRegion, apType);
+  const apCss = createTextRow({ label: 'Extra CSS Files', desc: 'Names of CSS files from Dashboard > Custom CSS, separated by commas. They are added only while this rule is active, even if switched off there.', value: '', placeholder: 'sniper.css', instant: true, onChange: () => { /* read on Add */ } });
+  const presetSelect = (scopeId: string): HTMLSelectElement => {
+    const sel = createSelect([{ value: '', label: '(leave as is)' }], '');
+    const fill = (): void => {
+      const keep = sel.value;
+      sel.innerHTML = '';
+      const none = document.createElement('option'); none.value = ''; none.textContent = '(leave as is)'; sel.appendChild(none);
+      for (const pr of ex.settingPresets.filter((x) => x.scope === scopeId)) { const op = document.createElement('option'); op.value = pr.id; op.textContent = pr.name; sel.appendChild(op); }
+      sel.value = keep;
+    };
+    sel.addEventListener('pointerdown', fill);
+    fill();
+    return sel;
+  };
+  const apSens = presetSelect('sensitivity');
+  const apFov = presetSelect('fov');
+  const selRow = createButtonRow({ label: 'Presets To Apply', desc: 'Pick a saved Sensitivity and FOV preset (saved in Sensitivity & FOV Presets above).', buttons: [] });
+  selRow.control.append(apSens, apFov);
+  let useCrosshair = false;
+  auto.append(
+    apName.row, apClass.row, apMode.row, apMap.row, whereRow.row, selRow.row, apCss.row,
+    createToggleRow({ label: 'Use My Current Crosshair', desc: 'Store the crosshair you have now in the rule. It replaces the normal crosshair while the rule is active.', checked: false, instant: true, onChange: (v) => { useCrosshair = v; } }),
+    createButtonRow({ label: 'Add Rule', desc: 'Adds a rule with the values above. Up to ' + AUTO_PROFILE_LIMIT + ' rules.', buttons: [{ label: 'Add Rule', title: 'Add this rule', onClick: () => {
+      if (ex.autoProfiles.rules.length >= AUTO_PROFILE_LIMIT) { showToast('Too many rules, delete one first'); return; }
+      const cssFiles = cssNames(apCss.input.value);
+      ex.autoProfiles.rules.push({
+        id: 'rule-' + Date.now().toString(36),
+        name: apName.input.value.trim() || 'Rule ' + (ex.autoProfiles.rules.length + 1),
+        class: apClass.input.value.trim(), mode: apMode.input.value.trim(), map: apMap.input.value.trim(),
+        region: apRegion.value, gameType: apType.value === 'custom' || apType.value === 'public' ? apType.value : '',
+        sensPreset: apSens.value, fovPreset: apFov.value,
+        crosshair: useCrosshair ? (JSON.parse(JSON.stringify(ex.crosshair)) as typeof ex.crosshair) : null,
+        cssFiles,
+      });
+      apApply(); renderRules(); showToast('Rule added');
+    } }] }).row,
+    ruleHolder,
+  );
+  renderRules();
+
+  // ── FPS per map and class ──
+  if (!ex.fpsStats) ex.fpsStats = { enabled: true };
+  const fpsGroup = createGroup(body, 'FPS By Map And Class');
+  const fpsHolder = document.createElement('div');
+  const renderFps = async (): Promise<void> => {
+    fpsHolder.textContent = '';
+    let raw: unknown;
+    try { raw = await ipcRenderer.invoke('fps-stats-get'); } catch { raw = null; }
+    const st = cleanFpsStats(raw);
+    const maps = summariseFps(st.maps);
+    const classes = summariseFps(st.classes);
+    if (!maps.length && !classes.length) { fpsHolder.appendChild(createInfoRow('No data yet. Play a few matches: each map or class needs about 30 seconds of play before it shows up.')); return; }
+    const line = (r: { name: string; avg: number; low: number; minutes: number }): string => '<b>' + escapeHtml(r.name) + '</b>: ' + Math.round(r.avg) + ' FPS on average, 1% low ' + Math.round(r.low) + ' (' + r.minutes + ' min measured)';
+    if (maps.length) {
+      fpsHolder.appendChild(createInfoRow('<b>Maps, heaviest first</b>'));
+      for (const r of maps.slice(0, 8)) {
+        const rowEl = createButtonRow({
+          label: r.name,
+          desc: Math.round(r.avg) + ' FPS on average, 1% low ' + Math.round(r.low) + ' (' + r.minutes + ' min measured)',
+          buttons: [{ label: 'Create rule', title: 'Add an Auto Profiles rule for this map that adds the CSS files typed above', onClick: () => makeMapRule(r.name) }],
+        }).row;
+        fpsHolder.appendChild(rowEl);
+      }
+    }
+    if (classes.length) { fpsHolder.appendChild(createInfoRow('<b>Classes, heaviest first</b>')); for (const r of classes.slice(0, 8)) fpsHolder.appendChild(createInfoRow(line(r))); }
+  };
+  fpsGroup.appendChild(createToggleRow({
+    label: 'Measure FPS Per Map And Class',
+    desc: 'While you are in a match the client counts frames in windows of 5 seconds (only then, with a very light counter) and keeps the average FPS and the 1% low for each map and class, on this computer only. It shows which maps and classes cost the most performance, for example to choose the settings of an Auto Profiles rule.',
+    checked: ex.fpsStats.enabled, instant: true,
+    onChange: (v) => { ex.fpsStats.enabled = v; save(); setFpsSampler(v); },
+  }));
+  fpsGroup.appendChild(createButtonRow({
+    label: 'FPS Statistics', desc: 'Averages are kept per map and per class; old data fades out over time.',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void renderFps(); } },
+      { label: 'Reset', title: 'Delete the saved FPS statistics', onClick: () => { void ipcRenderer.invoke('fps-stats-reset').then(() => renderFps()); } },
+    ],
+  }).row);
+  const fpsCss = createTextRow({
+    label: 'CSS For Heavy Maps', desc: 'Names of CSS files from Dashboard > Custom CSS, separated by commas (a lighter look for example). The Create rule buttons below add an Auto Profiles rule for that map that adds these files while you play it.',
+    value: '', placeholder: 'light.css', instant: true, onChange: () => { /* read when a rule is created */ },
+  });
+  fpsGroup.appendChild(fpsCss.row);
+  const makeMapRule = (mapName: string): void => {
+    const cssFiles = cssNames(fpsCss.input.value);
+    if (!cssFiles.length) { showToast('Type the CSS file name above first'); return; }
+    if (ex.autoProfiles.rules.some((r) => r.map === mapName && !r.class && !r.mode && !r.region && !r.gameType)) { showToast('There is already a rule for ' + mapName); return; }
+    if (ex.autoProfiles.rules.length >= AUTO_PROFILE_LIMIT) { showToast('Too many rules, delete one first'); return; }
+    ex.autoProfiles.rules.push({
+      id: 'rule-' + Date.now().toString(36), name: 'Light: ' + mapName.slice(0, 40), class: '', mode: '', map: mapName, region: '', gameType: '',
+      sensPreset: '', fovPreset: '', crosshair: null, cssFiles,
+    });
+    apApply(); renderRules();
+    showToast(ex.autoProfiles.enabled ? 'Rule added for ' + mapName : 'Rule added for ' + mapName + '. Switch Auto Profiles on for it to work.');
+  };
+  fpsGroup.appendChild(fpsHolder);
+  void renderFps();
 
   // ── Settings profiles ──
   const prof = createGroup(body, 'Settings Profiles');

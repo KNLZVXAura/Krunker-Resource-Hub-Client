@@ -14,6 +14,7 @@ import { devWindowIcon } from './platform';
 import { electronLog } from './logger';
 import { showWindow } from './hub-window';
 import { registerExtras, type ExtraDeps } from './dashboard-extras';
+import { acceptScript, forgetScript } from './script-changes';
 
 export interface DashboardDeps {
   version: string;
@@ -233,6 +234,7 @@ function registerIpc(deps: DashboardDeps): void {
     const name = safeScriptName(raw);
     if (!mgr || !name) return false;
     try { rmSync(join(mgr.dir, name), { force: true }); } catch { return false; }
+    forgetScript(name);
     await mgr.loadTracker(await mgr.scanScripts()); // prunes the deleted entry
     return true;
   });
@@ -248,6 +250,7 @@ function registerIpc(deps: DashboardDeps): void {
       let name = wanted;
       for (let i = 1; existsSync(join(mgr.dir, name)); i++) name = wanted.replace(/\.js$/i, `_${i}.js`);
       copyFileSync(src, join(mgr.dir, name));
+      try { acceptScript(name, readFileSync(join(mgr.dir, name), 'utf-8')); } catch { /* reported as new at the next start */ }
       return { name };
     } catch (err) { return { error: (err as Error).message }; }
   });
@@ -276,6 +279,7 @@ function registerIpc(deps: DashboardDeps): void {
     if (!name) return { error: 'Use a plain name for the script.' };
     try {
       writeFileSync(join(mgr.dir, name), code, 'utf-8');
+      acceptScript(name, code);
       const tracker = await mgr.loadTracker(await mgr.scanScripts());
       tracker[name] = true;
       await mgr.saveTracker(tracker);

@@ -9,7 +9,9 @@ import {
   createRowShell, createInfoRow, makeButton, createSelect,
 } from './settings-controls';
 import { showToast } from './utils';
+import { checkCombo, noteHotkey } from './hotkey-check';
 import { setCrosshair } from './crosshair';
+import { setAutoProfiles } from './auto-profiles';
 import { toggleStatsPanel } from './session-tracker';
 import { openLayoutEditor } from './layout-editor';
 
@@ -32,7 +34,7 @@ async function copyText(text: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function shareCode(kind: 'profile' | 'crosshair' | 'loadout', name: string, data: unknown): Promise<void> {
+export async function shareCode(kind: 'profile' | 'crosshair' | 'loadout' | 'autoprofile', name: string, data: unknown): Promise<void> {
   const r = await ipcRenderer.invoke('share-encode', kind, name, data) as { ok: boolean; code?: string; error?: string };
   if (!r.ok || !r.code) { showToast(r.error || 'Could not make a code'); return; }
   showToast((await copyText(r.code)) ? 'Code copied. Paste it in Discord or a chat.' : 'Could not copy the code');
@@ -96,7 +98,8 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
   st.appendChild(createTextRow({
     label: 'Streamer Mode Key', desc: 'Key or combination, for example Ctrl+Alt+M (empty = off)',
     value: ex.streamerKey, placeholder: 'Ctrl+Alt+M', instant: true,
-    onChange: (v) => { ex.streamerKey = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-streamer', v),
+    onChange: (v) => { ex.streamerKey = v.trim(); noteHotkey('extra-streamer', v); save(); },
   }).row);
 
   // ── Instant replay ──
@@ -115,7 +118,8 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
   ir.appendChild(createTextRow({
     label: 'Save Clip Key', desc: 'Key or combination, for example Ctrl+Alt+R',
     value: ex.instantReplay.key, placeholder: 'Ctrl+Alt+R', refreshOnly: true,
-    onChange: (v) => { ex.instantReplay.key = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-replay', v),
+    onChange: (v) => { ex.instantReplay.key = v.trim(); noteHotkey('extra-replay', v); save(); },
   }).row);
   ir.appendChild(createNumberRow({
     label: 'Auto Clip at Kill Streak', desc: 'Also save a clip by itself when you reach this many kills without dying (0 = off)',
@@ -140,8 +144,19 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
   ss.appendChild(createTextRow({
     label: 'Stats Panel Key', desc: 'Key or combination that shows your stats in the game',
     value: ex.sessionStats.key, placeholder: 'Ctrl+Alt+K', refreshOnly: true,
-    onChange: (v) => { ex.sessionStats.key = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-stats', v),
+    onChange: (v) => { ex.sessionStats.key = v.trim(); noteHotkey('extra-stats', v); save(); },
   }).row);
+  ss.appendChild(createNumberRow({
+    label: 'Daily Kill Goal', desc: 'A message shows when you reach this many kills in a day (0 = off). Counted from the saved statistics.',
+    min: 0, max: 100000, step: 10, value: ex.sessionStats.dailyKillGoal ?? 0, refreshOnly: true,
+    onChange: (v) => { ex.sessionStats.dailyKillGoal = v; save(); },
+  }));
+  ss.appendChild(createNumberRow({
+    label: 'Break Reminder (minutes)', desc: 'A message suggests a short break after this many minutes of play without a pause of 5 minutes or more, and again after each further interval (0 = off).',
+    min: 0, max: 600, step: 5, value: ex.sessionStats.breakMinutes ?? 0, refreshOnly: true,
+    onChange: (v) => { ex.sessionStats.breakMinutes = v; save(); },
+  }));
   ss.appendChild(createButtonRow({
     label: 'Show Stats', desc: 'Open the stats panel now',
     buttons: [{ label: 'Open', onClick: () => { void toggleStatsPanel(); } }],
@@ -152,7 +167,8 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
   lay.appendChild(createTextRow({
     label: 'Layout Editor Key', desc: 'Key or combination that opens the drag-and-drop editor for the nuke counter, Spotify card and Twitch chat',
     value: ex.layoutEditorKey, placeholder: 'Ctrl+Alt+L', instant: true,
-    onChange: (v) => { ex.layoutEditorKey = v.trim(); save(); },
+    validate: (v) => checkCombo('extra-layout', v),
+    onChange: (v) => { ex.layoutEditorKey = v.trim(); noteHotkey('extra-layout', v); save(); },
   }).row);
   lay.appendChild(createButtonRow({
     label: 'Layout Editor', desc: 'Drag each overlay to where you want it. Positions are saved right away.',
@@ -370,7 +386,8 @@ async function importCode(code: string, ex: ExtrasConfig, save: () => void, sync
     | { ok: false; error: string }
     | { ok: true; kind: 'profile'; name: string; data: string }
     | { ok: true; kind: 'crosshair'; name: string; data: ExtrasConfig['crosshair'] }
-    | { ok: true; kind: 'loadout'; name: string; packs: Array<{ name: string; source: string }> };
+    | { ok: true; kind: 'loadout'; name: string; packs: Array<{ name: string; source: string }> }
+    | { ok: true; kind: 'autoprofile'; name: string; rule: ExtrasConfig['autoProfiles']['rules'][number]; presets: ExtrasConfig['settingPresets'] };
   if (!r.ok) { showToast(r.error); return false; }
   if (r.kind === 'profile') {
     let name = r.name.slice(0, 60) || 'Shared profile';
@@ -388,6 +405,26 @@ async function importCode(code: string, ex: ExtrasConfig, save: () => void, sync
     save();
     setCrosshair(ex.crosshair);
     showToast('Crosshair imported and switched on. Reopen Settings to see its values.');
+    return true;
+  }
+  if (r.kind === 'autoprofile') {
+    if (ex.autoProfiles.rules.length >= 20) { showToast('You already have 20 rules. Delete one first.'); return false; }
+    // The presets that came with the rule are added to yours (an identical one you already have is reused); the rule then points at them
+    const mapPreset = (oldId: string, scope: 'sensitivity' | 'fov'): string => {
+      const src = r.presets.find((p) => p.id === oldId && p.scope === scope);
+      if (!src) return '';
+      const same = ex.settingPresets.find((p) => p.scope === scope && p.name === src.name && JSON.stringify(p.values) === JSON.stringify(src.values));
+      if (same) return same.id;
+      if (ex.settingPresets.length >= 40) return '';
+      const copy = { ...src, id: 'shared-' + Math.random().toString(36).slice(2, 10) };
+      ex.settingPresets.push(copy);
+      return copy.id;
+    };
+    const rule = { ...r.rule, id: 'rule-' + Date.now().toString(36), sensPreset: mapPreset(r.rule.sensPreset, 'sensitivity'), fovPreset: mapPreset(r.rule.fovPreset, 'fov') };
+    ex.autoProfiles.rules.push(rule);
+    save();
+    setAutoProfiles(ex.autoProfiles, ex.settingPresets, ex.crosshair);
+    showToast(`Rule added: ${rule.name}. Reopen Settings to see it under Auto Profiles. CSS files named in it only work if you have files with the same names.`);
     return true;
   }
   // loadout: install what is missing, then save it as a loadout

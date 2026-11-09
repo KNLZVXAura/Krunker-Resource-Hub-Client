@@ -2,12 +2,15 @@
 // One read-only wrapper around window.WebSocket, shared so features never patch it
 // twice. Subscribe with onGameFrame() to get each binary frame's event name + bytes.
 
+import { ipcRenderer } from 'electron';
 import { savedConsole as _console } from './saved-console';
+import { gameRegion } from './game-region';
 
 export type GameFrameHandler = (event: string, bytes: Uint8Array) => void;
 
 const handlers = new Set<GameFrameHandler>();
 let installed = false;
+let leavingPage = false;
 
 /** Subscribe to game frames. Returns an unsubscribe function. */
 export function onGameFrame(handler: GameFrameHandler): () => void {
@@ -26,6 +29,8 @@ export function installGameSocketTap(): void {
   const OrigWS = window.WebSocket;
   if (!OrigWS) return;
   installed = true;
+  // A socket that closes because the page is being left is not a lost connection
+  window.addEventListener('pagehide', () => { leavingPage = true; });
 
   const nativeToString = Function.prototype.toString;
   const nativeSource = nativeToString.call(OrigWS);
@@ -36,8 +41,11 @@ export function installGameSocketTap(): void {
       try {
         ws.addEventListener('message', onMessage);
         const host = hostOf(args[0]);
+        const openedAt = Date.now();
         ws.addEventListener('close', (ev: CloseEvent) => {
           _console.warn(`[KRH-Socket] closed host=${host} code=${ev.code} reason="${ev.reason || ''}" clean=${ev.wasClean}`);
+          // Tell the main process how long the socket lived: short-lived drops in a row can mean a broken userscript
+          if (!leavingPage) { try { ipcRenderer.send('conn-lost', { code: ev.code, lifetimeMs: Date.now() - openedAt, region: gameRegion(), clean: ev.wasClean, game: host.startsWith('lobby-') }); } catch { /* page is going away */ } }
         });
         ws.addEventListener('error', () => { _console.warn(`[KRH-Socket] error host=${host}`); });
       } catch (err) {

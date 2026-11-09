@@ -11,6 +11,7 @@ import { escapeHtml, showToast } from './utils';
 import { KRH_ICON_DATA_URL } from './header-icon';
 import { savedConsole as _console } from './saved-console';
 import { openKeybindDialog, keybindDisplayString } from './keybind-dialog';
+import { setHotkeyContext } from './hotkey-check';
 import { showConfirm } from './confirm-dialog';
 import { isSkippedKey, newImportChoices, skippedGroups } from './import-groups';
 import type { ImportGroup } from './import-groups';
@@ -26,7 +27,13 @@ import {
   buildChatSection, stopMusicPreview,
 } from './settings-sections';
 import { buildAccountsSection } from './alt-manager';
-import { getInstances, setScriptEnabled, parseMetadata } from './userscripts';
+import { getInstances, setScriptEnabled, parseMetadata, publishScriptHealth } from './userscripts';
+import { severity, statusText, websocketClash } from '../shared/script-health';
+import type { ScriptHealth } from '../shared/script-health';
+import { testsLeft } from '../shared/script-hunt';
+import { changeLine } from '../shared/script-changes';
+import type { ChangeEntry } from '../shared/script-changes';
+import type { HuntState } from '../shared/script-hunt';
 import type { UserscriptInstance } from './userscripts';
 
 // ── Krunker native settings (localStorage) ──
@@ -414,6 +421,7 @@ function renderSettings(searchQuery?: string, opts?: RenderOptions): void {
     saveBinds: () => ipcRenderer.invoke('set-config', 'keybinds', binds),
     isWindows,
   };
+  setHotkeyContext(binds, allConf.extras || {});
 
   // ── Header band (shown only when the KRH watermark setting is on; rendered
   // either way so the watermark toggle can show/hide it live) ──
@@ -529,6 +537,153 @@ function renderSettings(searchQuery?: string, opts?: RenderOptions): void {
   holder.appendChild(container);
 }
 
+// ── Script health: which scripts run, which failed, which are skipped and what in their code is risky ──
+function buildScriptHealthGroup(body: HTMLElement, dashboard: boolean): void {
+  const group = createGroup(body, 'Script Health');
+  const holder = document.createElement('div');
+  const huntHolder = document.createElement('div');
+  const names = new Map<string, string>();
+  const nice = (f: string): string => names.get(f) || f.replace(/^builtin-/, '').replace(/\.js$/, '');
+  const order = { bad: 0, warn: 1, ok: 2 } as const;
+  const render = async (): Promise<void> => {
+    if (!dashboard) { publishScriptHealth(); await new Promise((r) => setTimeout(r, 300)); }
+    let res: { live: boolean; list: ScriptHealth[] } | null;
+    try { res = await ipcRenderer.invoke('script-health-get'); } catch { res = null; }
+    holder.textContent = '';
+    const list = res && Array.isArray(res.list) ? res.list : [];
+    for (const h of list) names.set(h.filename, h.name);
+    if (!list.length) {
+      holder.appendChild(createInfoRow('Nothing reported yet. Start the game: each script reports here when it starts, fails or is skipped.'));
+      reapplySearch();
+      return;
+    }
+    if (res && !res.live) holder.appendChild(createInfoRow('The game is not running. This is how the scripts were doing in the last game.'));
+    const clash = websocketClash(list);
+    if (clash.length) {
+      holder.appendChild(createInfoRow('<span class="krh-health krh-health-warn">Check</span> ' + escapeHtml(clash.join(', ')) + ' all wrap WebSocket. Two scripts that do this can break the game connection (Lost Connection). Keep only one switched on if you see that.'));
+    }
+    const rows = list
+      .map((h) => ({ h, sev: h.status === 'off' ? 3 : order[severity(h)] }))
+      .sort((a, b) => a.sev - b.sev || a.h.name.localeCompare(b.h.name));
+    for (const { h, sev } of rows) {
+      const notes = h.notes.map((n) => '<br><span class="krh-us-meta">' + escapeHtml(n) + '</span>').join('');
+      const { row, control } = createRowShell(h.name + (h.version ? ' v' + h.version : '') + (h.builtin ? ' (built-in)' : ''), escapeHtml(statusText(h)) + notes);
+      const cls = sev === 3 ? 'off' : severity(h);
+      const text = sev === 3 ? 'Off' : cls === 'bad' ? 'Error' : cls === 'warn' ? 'Check' : 'OK';
+      control.innerHTML = '<span class="krh-health krh-health-' + cls + '">' + text + '</span>';
+      holder.appendChild(row);
+    }
+    reapplySearch();
+  };
+  group.appendChild(createButtonRow({
+    label: 'Script Health',
+    desc: 'How each script is doing in the game: running, failed, skipped because the same script runs twice, or something in its code that is known to cause trouble. Findings come from reading the code, so they are hints, not proof.',
+    buttons: [{ icon: 'refresh', label: 'Refresh', title: 'Refresh', onClick: () => { void render(); } }],
+  }).row);
+  // Find the problem script: switch scripts off in halves until the one that causes the problem is found
+  const renderHunt = async (): Promise<void> => {
+    huntHolder.textContent = '';
+    let st: HuntState | null;
+    try { st = (await ipcRenderer.invoke('script-hunt-state')) as HuntState | null; } catch { st = null; }
+    const refresh = async (): Promise<void> => { await renderHunt(); await render(); };
+    if (!st) {
+      huntHolder.appendChild(createButtonRow({
+        label: 'Find The Problem Script',
+        desc: 'Use this when the game freezes, breaks or shows "Lost Connection" and you suspect a script. The client switches scripts off in halves and you test the game after each step (reload with F5 and try to reproduce the problem). It takes about as many steps as the number of scripts needs halving, usually 3 to 5. Your scripts are switched back on when it ends, except the one found.',
+        buttons: [{ label: 'Start', title: 'Start the search (switches every script off for the first test)', onClick: () => {
+          void ipcRenderer.invoke('script-hunt-start').then((r: { ok?: boolean; error?: string } | null) => {
+            if (!r?.ok) showToast(r?.error || 'Could not start');
+            else showToast('Every script is off. Reload the game (F5) and test.');
+            return refresh();
+          });
+        } }],
+      }).row);
+      return;
+    }
+    const answer = (stillThere: boolean): void => {
+      void ipcRenderer.invoke('script-hunt-answer', stillThere).then((r: { ok?: boolean; error?: string; state?: HuntState } | null) => {
+        if (!r?.ok) showToast(r?.error || 'Could not continue');
+        else if (r.state?.phase === 'testing') showToast('Reload the game (F5) and test again.');
+        return refresh();
+      });
+    };
+    const end = (toast: string): void => { void ipcRenderer.invoke('script-hunt-end').then(() => { showToast(toast); return refresh(); }); };
+    if (st.phase === 'found' && st.culprit) {
+      huntHolder.appendChild(createButtonRow({
+        label: 'Found: ' + nice(st.culprit),
+        desc: 'Switching this script off made the problem go away, and it stays off. Your other scripts are back on. You can switch it on again in its own settings if you want to try again or report it to its author.',
+        buttons: [{ label: 'Done', title: 'Close this result', onClick: () => end('Done') }],
+      }).row);
+      return;
+    }
+    if (st.phase === 'not-scripts') {
+      huntHolder.appendChild(createButtonRow({
+        label: 'No script is the cause',
+        desc: 'The problem happened with every script off (or the answers did not agree), so a script is probably not the reason. Your scripts are back on.',
+        buttons: [{ label: 'Done', title: 'Close this result', onClick: () => end('Done') }],
+      }).row);
+      return;
+    }
+    const offList = st.off.map(nice).join(', ');
+    huntHolder.appendChild(createButtonRow({
+      label: 'Test ' + st.step + ' (about ' + testsLeft(st) + ' left)',
+      desc: (st.step === 1 ? 'Every script is switched off.' : 'Switched off: ' + offList + '. The others are on.') + ' Reload the game (F5), try to make the problem happen, then answer: does it still happen?',
+      buttons: [
+        { label: 'Still happens', title: 'The problem is still there', onClick: () => answer(true) },
+        { label: 'It is gone', title: 'The problem did not happen', onClick: () => answer(false) },
+        { label: 'Cancel', title: 'Stop and switch everything back on', onClick: () => end('Scripts switched back on') },
+      ],
+    }).row);
+  };
+  group.appendChild(createButtonRow({
+    label: 'Problem Report',
+    desc: 'Copies a report you can paste in Discord or GitHub: versions, your PC, performance settings, how every script is doing, the latest connection problems from the log and the end of the log. E-mail addresses and tokens are hidden. The same report is in Dashboard > Diagnostics.',
+    buttons: [{ label: 'Copy Report', title: 'Copy the problem report', onClick: () => {
+      if (!dashboard) publishScriptHealth();
+      void new Promise((r) => setTimeout(r, dashboard ? 0 : 300)).then(() => ipcRenderer.invoke('dash:diag-copy')).then(() => showToast('Report copied')).catch(() => showToast('Could not copy the report'));
+    } }],
+  }).row);
+  // Scripts that changed without the client doing it (another program edited or replaced them, or they were added to the folder)
+  const changeHolder = document.createElement('div');
+  const renderChanges = async (): Promise<void> => {
+    changeHolder.textContent = '';
+    let list: ChangeEntry[];
+    try { list = (await ipcRenderer.invoke('script-changes-get')) as ChangeEntry[]; } catch { list = []; }
+    if (!Array.isArray(list) || !list.length) { changeHolder.appendChild(createInfoRow('No script changed outside the client since it started watching.')); return; }
+    for (const c of list.slice().reverse().slice(0, 10)) {
+      const when = new Date(c.at);
+      const risk = c.risks.length ? '<br><span class="krh-health krh-health-warn">New</span> ' + c.risks.map(escapeHtml).join(' ') : '';
+      const sample = c.sample.length ? '<br><span class="krh-us-meta">' + c.sample.map(escapeHtml).join(' &nbsp;|&nbsp; ') + '</span>' : '';
+      changeHolder.appendChild(createInfoRow('<b>' + escapeHtml(changeLine(c)) + '</b> · ' + escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + risk + sample));
+    }
+  };
+  group.appendChild(createButtonRow({
+    label: 'Scripts Changed Outside The Client',
+    desc: 'Userscripts run inside the game, so a script that changes without you doing it deserves a look. At game start the client compares every script in the folder with what it saw last time and lists what was added, replaced or removed, with the number of lines and a few added lines. Edits made in Dashboard > Userscripts are accepted silently. Look especially at lines marked New (network requests, eval, WebSocket wrapping).',
+    buttons: [
+      { icon: 'refresh', label: 'Refresh', title: 'Refresh the list', onClick: () => { void renderChanges(); } },
+      { label: 'Clear', title: 'Clear the list', onClick: () => { void ipcRenderer.invoke('script-changes-clear').then(() => renderChanges()); } },
+    ],
+  }).row);
+  group.appendChild(changeHolder);
+  void renderChanges();
+  const offerRow = createToggleRow({
+    label: 'Offer To Look For A Broken Script',
+    desc: 'When the game connection drops three times within 10 minutes, each time soon after it opened, the client asks once whether it should look for a script that causes it. At most once for each start of the client.',
+    checked: true, instant: true,
+    onChange: (v) => { void ipcRenderer.invoke('script-hunt-offer-set', v); },
+  });
+  group.appendChild(offerRow);
+  void ipcRenderer.invoke('script-hunt-offer-get').then((v: unknown) => {
+    const cb = offerRow.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    if (cb) cb.checked = v !== false;
+  }).catch(() => { /* keep the default shown */ });
+  group.appendChild(huntHolder);
+  void renderHunt();
+  group.appendChild(holder);
+  void render();
+}
+
 // ── Userscripts settings section ──
 function renderUserscriptsSection(body: HTMLElement, dashboard = false): void {
   ipcRenderer.invoke('get-config', 'userscripts').then((usConf: any) => {
@@ -550,6 +705,7 @@ function renderUserscriptsSection(body: HTMLElement, dashboard = false): void {
     }).row);
 
     // ── Built-in scripts: part of the client, own on/off switch each ──
+    buildScriptHealthGroup(body, dashboard);
     const builtinGroup = createGroup(body, 'Built-in Scripts');
     const addBuiltinRow = (grp: HTMLElement, name: string, descHtml: string, enabled: boolean, onToggle: (on: boolean, cb: HTMLInputElement) => void): HTMLInputElement => {
       const { row, control } = createRowShell(name, descHtml);

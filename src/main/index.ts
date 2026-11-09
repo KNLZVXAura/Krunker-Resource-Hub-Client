@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, Notification, clipboard, dialog, ipcMain, net, powerSaveBlocker, safeStorage, screen, session, shell, webContents } from 'electron';
 import { join, extname, basename, dirname, resolve as resolvePath } from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, watch as fsWatch, promises as fsp } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, watch as fsWatch, promises as fsp } from 'fs';
 import { get as httpsGet } from 'https';
 import { execFile } from 'child_process';
 import * as os from 'os';
@@ -23,10 +23,36 @@ import { BuiltinScripts, isBuiltinFilename } from './builtin-scripts';
 import libMsgpack from '../../assets/userscript-libs/msgpack-lite-0.1.26.min.js?raw';
 import { ALL_CLIENT_CSS, HIDE_ADS_CSS, CONSENT_DISMISS_JS } from './client-ui';
 import { electronLog, rendererLog, getLogPath, closeLogStreams } from './logger';
-import { checkForUpdate, downloadUpdate, installUpdate, checkForUpdateNotice, diagnoseUpdate, RELEASES_URL } from './updater';
+import { checkForUpdate, downloadUpdate, installUpdate, checkForUpdateNotice, diagnoseUpdate, listPastReleases, RELEASES_URL } from './updater';
 import { installEscapeLock, handleEscapeInput, setEscapeFastRelease, releaseEscapeShortcut } from './escape-lock';
 import { normalisePresets } from '../shared/presets';
 import { cleanCrosshairImage } from '../shared/crosshair-image';
+import { cleanHealth } from '../shared/script-health';
+import { normaliseAutoProfiles } from '../shared/auto-profiles';
+import { flushPingHistory, getPingHistory, recordRegionPings, resetPingHistory } from './ping-history';
+import { flushFpsStats, getFpsStats, recordFpsSample, resetFpsStats } from './fps-stats';
+import { clearSettingsHistory, findSettingsChange, flushSettingsHistory, forgetFrom, initSettingsHistory, noteSettingsChange, settingsHistory } from './settings-history';
+import { humanize } from '../shared/settings-history';
+import { answerScriptHunt, endScriptHunt, huntState, startScriptHunt } from './script-hunt';
+import { connectionLines, formatReportExtras } from '../shared/problem-report';
+import { addDrop, cleanClose, shouldOffer } from '../shared/conn-watch';
+import { runNetDoctor } from './net-doctor';
+import { dirSize, listFiles, removeFiles } from './storage';
+import { buildWeekly } from '../shared/weekly-summary';
+import { clearJournal, flushPlayLog, journalView, playLogView, recordDrop, recordFpsForRound, recordPlaySample, resetPlayLog } from './play-log';
+import { markWeekly, weeklyState } from './weekly';
+import { weekKey } from '../shared/trends';
+import { cleanDays, olderThan, planText, totalSize } from '../shared/storage';
+import type { FileInfo, StorageEntry } from '../shared/storage';
+import { flushTrends, initTrends, takeNewFindings, trendsView } from './trends';
+import { buildReady } from '../shared/ready-check';
+import { changeLine } from '../shared/script-changes';
+import { changeLog, checkScripts, clearChangeLog } from './script-changes';
+import { cleanClipContext, sizeText as clipSizeText, autoTitle } from '../shared/clips';
+import { clipPath, deleteClip, listClips, renameClip } from './clips';
+import type { CloseEvent as ConnDrop } from '../shared/conn-watch';
+import type { HuntBackend } from './script-hunt';
+import type { ScriptHealth } from '../shared/script-health';
 import { updateWithoutInstaller, applyLiteAndRelaunch, cleanupLite } from './lite-update';
 import { createHubWindow, openSiteWindow, showWindow, setHubSuspended, authDeepLinkToHubUrl, HUB_URL } from './hub-window';
 import { loadBlocklist, userListsDir } from './user-lists';
@@ -37,11 +63,16 @@ import { TabManager } from './tab-manager';
 import { openRankedQueue, loadQueueMaps, DEFAULT_RANKED_AUDIO_URL } from './ranked-queue';
 import { loadOfficialMaps } from './official-maps';
 import { takeScreenshot, takeAreaScreenshot, openScreenshotsFolder, revealLastScreenshot } from './screenshot';
-import { toggleRecording, togglePauseRecording, stopRecording, openRecordingsFolder, startReplayBuffer, stopReplayBuffer, saveReplayClip, setReplaySeconds, replayActive } from './recorder';
+import { recordingsDir, toggleRecording, togglePauseRecording, stopRecording, openRecordingsFolder, startReplayBuffer, stopReplayBuffer, saveReplayClip, setReplaySeconds, replayActive } from './recorder';
 import { installPackFromUrl, installPackFromFile, listPacks, deletePack, PACK_ID_RE } from './packs';
 import { encodeShare, decodeShare } from './share-code';
-import { addDelta, endSession, flushStats, getStats, clearStats, summaryText } from './session-stats';
+import { addDelta, allSessions, endSession, flushStats, getStats, clearStats, setSessionTag, summaryText } from './session-stats';
+import { sessionsToCsv } from '../shared/stats-csv';
+import { compareText } from '../shared/stats-compare';
+import { autoBackupPath, copyAutoBackup, createBackup, listAutoBackups, restoreBackup, writeAutoBackup, type AutoBackupKind, type BackupContext } from './backup';
+import { setPreUpdateHook } from './pre-update';
 import { beginLaunchGuard, isSafeMode, markCleanQuit, noteProcessCrash } from './safe-mode';
+import { crashRemedies } from './crash-remedies';
 import { startBackgroundUpdates, wireHubBadge, installReadyUpdate, installOnQuitIfWanted, pokeBackgroundUpdates, getReadyUpdate } from './update-manager';
 import { TwitchChat, normalizeChannel, fetchEmoteImage } from './twitch';
 import { TwitchLinkBot, loadToken as loadTwitchBotToken, saveToken as saveTwitchBotToken, normalizeToken as normalizeTwitchBotToken } from './twitch-link';
@@ -154,21 +185,26 @@ function osPing(host: string): Promise<number> {
 let pingRefresh: Promise<Record<string, number>> | null = null;
 const PING_ROUND_CAP_MS = 2500;
 
+/** The region server list of the matchmaker (name -> address). */
+async function fetchPingList(): Promise<Record<string, string>> {
+  const data = await new Promise<string>((resolve, reject) => {
+    const req = httpsGet('https://matchmaker.krunker.io/ping-list?hostname=krunker.io', (res) => {
+      let body = '';
+      res.on('data', (chunk: string) => { body += chunk; });
+      res.on('end', () => resolve(body));
+      res.on('error', reject);
+    });
+    req.setTimeout(3000, () => req.destroy(new Error('ping-list timed out')));
+    req.on('error', reject);
+  });
+  return JSON.parse(data) as Record<string, string>;
+}
+
 function refreshRegionPings(): Promise<Record<string, number>> {
   if (pingRefresh) return pingRefresh;
   pingRefresh = (async () => {
     try {
-      const data = await new Promise<string>((resolve, reject) => {
-        const req = httpsGet('https://matchmaker.krunker.io/ping-list?hostname=krunker.io', (res) => {
-          let body = '';
-          res.on('data', (chunk: string) => { body += chunk; });
-          res.on('end', () => resolve(body));
-          res.on('error', reject);
-        });
-        req.setTimeout(3000, () => req.destroy(new Error('ping-list timed out')));
-        req.on('error', reject);
-      });
-      const serverIPs: Record<string, string> = JSON.parse(data);
+      const serverIPs = await fetchPingList();
       const results: Record<string, number> = {};
       const all = Promise.allSettled(Object.entries(serverIPs).map(async ([server, ip]) => {
         const latency = await osPing(ip.split(':')[0]);
@@ -177,6 +213,7 @@ function refreshRegionPings(): Promise<Record<string, number>> {
       await Promise.race([all, new Promise<void>((r) => setTimeout(r, PING_ROUND_CAP_MS))]);
       pingCache = { ...pingCache, ...results };
       pingCacheTime = Date.now();
+      recordRegionPings(results);
       return pingCache;
     } catch (err) {
       electronLog.warn('[KRH] Ping regions error:', err);
@@ -549,6 +586,51 @@ app.on('child-process-gone', (_e, details) => {
   if (details.type === 'GPU' && ['crashed', 'oom', 'launch-failed'].includes(details.reason)) noteProcessCrash(`GPU process (${details.reason})`);
 });
 
+// Settings categories included in export/import and in backups. Deliberately excludes:
+//   accounts          — encrypted alt-account credentials (never exported)
+//   window/tabWindow  — machine-specific window geometry
+//   savedTabs         — transient last-open tabs
+const EXPORT_CONFIG_KEYS = [
+  'performance', 'game', 'keystrokes', 'nukeCounter', 'twitch', 'spotify', 'swapper', 'matchmaker',
+  'keybinds', 'userscripts', 'ui', 'discord', 'translator', 'advanced', 'extras',
+] as const;
+
+/** Automatic backup right before an update is installed (see pre-update.ts). Works without the game running. */
+function runAutoBackup(kind: AutoBackupKind = 'pre-update', force = false): void {
+  if (safeMode) return;
+  const extras = config.get('extras') as Partial<ExtrasConfig> | undefined;
+  if (kind === 'pre-update' && !force && extras?.autoBackup === false) return;
+  const kh = join(app.getPath('userData'), 'KRH Client');
+  const us = config.get('userscripts') || { enabled: true, path: '' };
+  const client: Record<string, unknown> = {};
+  for (const key of EXPORT_CONFIG_KEYS) client[key] = config.get(key as keyof typeof config.store);
+  client.game = { ...(client.game as Record<string, unknown>) };
+  delete (client.game as Record<string, unknown>).lastServer;
+  client.ui = { ...(client.ui as Record<string, unknown>) };
+  delete (client.ui as Record<string, unknown>).lastSeenVersion;
+  delete (client.ui as Record<string, unknown>).skippedUpdateVersion;
+  const written = writeAutoBackup({
+    dirs: { scripts: join(us.path || kh, 'scripts'), css: join(kh, 'user-css'), builtin: join(kh, 'builtin-scripts'), data: kh },
+    readClient: () => client,
+    writeClient: () => 0,
+    appVersion,
+    parent: null,
+  }, join(kh, 'backups'), 3, kind);
+  const copyDir = (extras?.backupCopyDir ?? '').trim();
+  if (written && copyDir) copyAutoBackup(written, copyDir);
+}
+
+/** Writes a scheduled backup when the chosen interval has passed since the last one. Called at start-up and every few hours. */
+function maybeScheduledBackup(): void {
+  const extras = config.get('extras') as Partial<ExtrasConfig> | undefined;
+  const mode = extras?.backupSchedule ?? 'weekly';
+  if (mode === 'off' || safeMode) return;
+  const gap = mode === 'daily' ? 23 * 3600_000 : 6.9 * 24 * 3600_000;
+  const last = listAutoBackups(join(app.getPath('userData'), 'KRH Client', 'backups')).find((b) => b.kind === 'scheduled');
+  if (last && Date.now() - last.at < gap) return;
+  runAutoBackup('scheduled');
+}
+
 app.whenReady().then(async () => {
   electronLog.log('[KRH] App ready');
 
@@ -594,8 +676,9 @@ app.whenReady().then(async () => {
   createSplash(appVersion);
 
   // Crash-loop guard: decides between normal and safe mode before any feature loads
-  await beginLaunchGuard();
+  await beginLaunchGuard(() => crashRemedies(new Set<string>(EXPORT_CONFIG_KEYS)));
   safeMode = isSafeMode();
+  setPreUpdateHook(() => runAutoBackup('pre-update'));
   if (!splashAlive()) return; // closed while the safe-mode dialog was open
 
   // ── Update check ──
@@ -913,6 +996,7 @@ async function launchApp(): Promise<void> {
     app.exit(0);
   };
   let gameActive = false;
+  const scriptHealth = new Map<string, ScriptHealth>();
   let dashboardHintShown = false;
   // Never destroy the dashboard from inside one of its own event / IPC handlers: let that handler finish first.
   const closeDashLater = (): void => { setImmediate(() => closeDashboard()); };
@@ -1027,6 +1111,7 @@ async function launchApp(): Promise<void> {
     if (win.isDestroyed()) return;
     if (!gameActive) {
       gameActive = true;
+      scriptHealth.clear();
       if (scriptGuard) {
         void scriptGuard.beginSession();
         if (healthyTimer) clearTimeout(healthyTimer);
@@ -1256,6 +1341,21 @@ async function launchApp(): Promise<void> {
         logTail: () => {
           try { return readFileSync(getLogPath(), 'utf-8').split('\n').slice(-60).join('\n'); } catch { return ''; }
         },
+        extraReport: () => {
+          let raw = '';
+          try { const full = readFileSync(getLogPath(), 'utf-8'); raw = full.length > 600_000 ? full.slice(-600_000) : full; } catch { /* no log yet */ }
+          const ex = getExtras();
+          return formatReportExtras({
+            health: [...scriptHealth.values()],
+            gameRunning: gameActive && !win.isDestroyed(),
+            hunt: huntState(),
+            connectionLines: connectionLines(raw),
+            backups: listAutoBackups(join(app.getPath('userData'), 'KRH Client', 'backups')).map((b) => ({ kind: b.kind, version: b.version, at: b.at })),
+            autoBackup: ex.autoBackup,
+            schedule: ex.backupSchedule,
+            userscriptsOn: config.get('userscripts')?.enabled !== false,
+          });
+        },
         copyText: (text) => clipboard.writeText(text),
         getPings: (force) => (force || Object.keys(pingCache).length === 0 ? refreshRegionPings() : Promise.resolve(pingCache)),
         getMatchmakerRegions: () => config.get('matchmaker')?.regions ?? [],
@@ -1282,14 +1382,9 @@ async function launchApp(): Promise<void> {
           return true;
         },
         applyLowEndAndRestart: () => { applyLowEndPreset(); relaunchApp(); },
-        perfDoctor: () => runPerfDoctor({
-          performance: () => (config.get('performance') ?? {}) as { fpsUnlocked?: boolean; frameCap?: number; cpuThrottle?: number; cpuThrottleMenu?: number; processPriority?: string },
-          advanced: () => (config.get('advanced') ?? {}) as { gpuProfile?: string; ignoreDisplayScaling?: boolean; perfTweaks?: boolean },
-          instantReplayOn: () => (config.get('extras') as Partial<ExtrasConfig> | undefined)?.instantReplay?.enabled === true,
-          gameActive: () => gameActive,
-          gameWindow: () => (win.isDestroyed() ? null : win),
-          version: appVersion,
-        }),
+        backupCreate: async () => { const c = backupContext(); return c ? createBackup(c) : { ok: false, error: 'Not available in safe mode.' }; },
+        backupRestore: async () => { const c = backupContext(); return c ? restoreBackup(c) : { ok: false, error: 'Not available in safe mode.' }; },
+        perfDoctor: () => runPerf(),
         news: (force) => getKrunkerNews(join(app.getPath('userData'), 'KRH Client', 'news-feed-cache.json'), force),
         openHubRoute: (route) => {
           if (hub.isDestroyed()) return;
@@ -1741,14 +1836,47 @@ async function launchApp(): Promise<void> {
     'advanced', 'tabWindow', 'keystrokes', 'nukeCounter', 'twitch', 'spotify', 'extras',
   ]);
 
-  // Settings categories included in export/import. Deliberately excludes:
-  //   accounts          — encrypted alt-account credentials (never exported)
-  //   window/tabWindow  — machine-specific window geometry
-  //   savedTabs         — transient last-open tabs
-  const EXPORT_CONFIG_KEYS = [
-    'performance', 'game', 'keystrokes', 'nukeCounter', 'twitch', 'spotify', 'swapper', 'matchmaker',
-    'keybinds', 'userscripts', 'ui', 'discord', 'translator', 'advanced', 'extras',
-  ] as const;
+  // Client settings as put into a backup (same categories as the settings export: no accounts, no window geometry)
+  function readClientSettings(): Record<string, unknown> {
+    flushPendingConfigWrites();
+    const out: Record<string, unknown> = {};
+    for (const key of EXPORT_CONFIG_KEYS) out[key] = config.get(key as keyof typeof config.store);
+    out.game = { ...(out.game as Record<string, unknown>) };
+    delete (out.game as Record<string, unknown>).lastServer;
+    out.ui = { ...(out.ui as Record<string, unknown>) };
+    delete (out.ui as Record<string, unknown>).lastSeenVersion;
+    delete (out.ui as Record<string, unknown>).skippedUpdateVersion;
+    return out;
+  }
+
+  // Applies backed-up settings the way the settings import does: allow-listed categories only, merged over defaults
+  function applyClientSettings(incoming: Record<string, unknown>): number {
+    flushPendingConfigWrites();
+    let applied = 0;
+    for (const key of EXPORT_CONFIG_KEYS) {
+      const value = incoming[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const merged = { ...(DEFAULT_CONFIG as Record<string, any>)[key], ...(value as object) } as Record<string, unknown>;
+        // A backup or an imported file must not choose where the backup copies go
+        if (key === 'extras') merged.backupCopyDir = getExtras().backupCopyDir;
+        config.set(key as any, keepFolderPath(key, merged));
+        applied++;
+      }
+    }
+    return applied;
+  }
+
+  function backupContext(): BackupContext | null {
+    if (!userscriptManager) return null;
+    const kh = join(app.getPath('userData'), 'KRH Client');
+    return {
+      dirs: { scripts: userscriptManager.dir, css: userCss.dir, builtin: join(kh, 'builtin-scripts'), data: kh },
+      readClient: readClientSettings,
+      writeClient: applyClientSettings,
+      appVersion,
+      parent: BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null,
+    };
+  }
 
   // Folder paths are hand-edited only: page scripts and imported files must not repoint where code loads from
   function keepFolderPath(key: string, value: unknown): unknown {
@@ -1845,6 +1973,21 @@ async function launchApp(): Promise<void> {
         detail: v.perfHud?.detail === 'fps' ? 'fps' : 'full',
         startOn: bool(v.perfHud?.startOn, d.perfHud.startOn),
       },
+      fpsStats: { enabled: bool(obj(v.fpsStats).enabled, d.fpsStats.enabled) },
+      autoBackup: bool(v.autoBackup, d.autoBackup),
+      playLog: { enabled: bool(obj(v.playLog).enabled, d.playLog.enabled) },
+      weeklySummary: bool(v.weeklySummary, d.weeklySummary),
+      perfWarnings: bool(v.perfWarnings, d.perfWarnings),
+      offerScriptHunt: bool(v.offerScriptHunt, d.offerScriptHunt),
+      backupCopyDir: str(v.backupCopyDir, d.backupCopyDir, 500),
+      backupSchedule: v.backupSchedule === 'off' || v.backupSchedule === 'daily' || v.backupSchedule === 'weekly' ? v.backupSchedule : d.backupSchedule,
+      autoProfiles: normaliseAutoProfiles(v.autoProfiles, (c) => sanitizeCrosshair(c)),
+      netHud: {
+        key: str(v.netHud?.key, d.netHud.key, 30),
+        corner: (['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).find((c) => c === v.netHud?.corner) ?? d.netHud.corner,
+        startOn: bool(v.netHud?.startOn, d.netHud.startOn),
+        suggestRegion: bool(v.netHud?.suggestRegion, d.netHud.suggestRegion),
+      },
       rpcRich: {
         classIcon: bool(rr.classIcon, d.rpcRich.classIcon),
         mapArt: bool(rr.mapArt, d.rpcRich.mapArt),
@@ -1864,6 +2007,8 @@ async function launchApp(): Promise<void> {
         enabled: bool(ss.enabled, d.sessionStats.enabled),
         summary: bool(ss.summary, d.sessionStats.summary),
         key: str(ss.key, d.sessionStats.key, 30),
+        dailyKillGoal: numIn(ss.dailyKillGoal, d.sessionStats.dailyKillGoal, 0, 100000),
+        breakMinutes: numIn(ss.breakMinutes, d.sessionStats.breakMinutes, 0, 600),
       },
       packs: {
         enabled: Array.isArray(pk.enabled) ? pk.enabled.filter((x) => typeof x === 'string' && PACK_ID_RE.test(x)).slice(0, 200) : [],
@@ -2175,7 +2320,7 @@ async function launchApp(): Promise<void> {
     return { ok: true };
   });
 
-  ipcMain.handle('set-config', (_e, key: string, value: unknown) => {
+  const applySetConfig = (key: string, value: unknown): boolean | undefined => {
     if (!ALLOWED_CONFIG_KEYS.has(key)) return;
     value = keepFolderPath(key, value);
     if (key === 'advanced') {
@@ -2196,6 +2341,10 @@ async function launchApp(): Promise<void> {
       // an older copy must not undo them.
       clean.streamerMode = prev.streamerMode;
       clean.packs.enabled = prev.packs.enabled;
+      // The backup copy folder only changes through its own folder dialog
+      clean.backupCopyDir = prev.backupCopyDir;
+      // The script search offer is switched through its own calls (also from the offer dialog)
+      clean.offerScriptHunt = prev.offerScriptHunt;
       config.set('extras', clean);
       disableVideoSkins = clean.disableVideoSkins;
       setEscapeFastRelease(clean.escapeFastRelease);
@@ -2267,6 +2416,43 @@ async function launchApp(): Promise<void> {
       configWriteTimer = setTimeout(flushPendingConfigWrites, 300);
     }
     return frameCapNeedsRestart;
+  };
+  // The value a category has right now, including a write that is still waiting to be saved to disk
+  const currentConfigValue = (key: string): unknown => (pendingConfigWrites.has(key) ? pendingConfigWrites.get(key) : config.get(key as keyof typeof config.store));
+  initSettingsHistory(new Set<string>(EXPORT_CONFIG_KEYS));
+  ipcMain.handle('set-config', (_e, key: string, value: unknown) => {
+    const track = (EXPORT_CONFIG_KEYS as readonly string[]).includes(key);
+    const before = track ? currentConfigValue(key) : undefined;
+    const result = applySetConfig(key, value);
+    if (track) noteSettingsChange(key, before, currentConfigValue(key));
+    return result;
+  });
+  // Settings history: the list for Settings > Extras and the undo of one change (asks first, then restarts the client)
+  ipcMain.handle('settings-history-get', () => settingsHistory().map((e) => ({ id: e.id, at: e.at, key: e.key, label: humanize(e.key), fields: e.fields.map(humanize) })));
+  ipcMain.handle('settings-history-clear', () => { clearSettingsHistory(); return true; });
+  ipcMain.handle('settings-history-undo', async (_e, id: unknown) => {
+    const entry = typeof id === 'string' ? findSettingsChange(id) : null;
+    if (!entry) return { ok: false, error: 'That change is not in the list any more.' };
+    const parent = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null;
+    const opts = {
+      type: 'question' as const, title: 'KRH Client', message: 'Undo this change?',
+      detail: `This puts "${humanize(entry.key)}" back to how it was before the change (${entry.fields.map(humanize).slice(0, 4).join(', ') || 'settings'}). Later changes in the same category are undone too. The client restarts afterwards.`,
+      buttons: ['Undo', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+    };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response !== 0) return { ok: false, canceled: true };
+    flushPendingConfigWrites();
+    const prev = JSON.parse(JSON.stringify(entry.prev)) as Record<string, unknown>;
+    if (entry.key === 'extras') {
+      // Streamer mode and the switched-on packs change through their own calls, not through settings: keep them as they are now
+      const now = getExtras();
+      prev.streamerMode = now.streamerMode;
+      prev.packs = { ...(prev.packs as object | undefined), enabled: now.packs.enabled };
+    }
+    applyClientSettings({ [entry.key]: prev });
+    forgetFrom(entry.id);
+    setTimeout(() => relaunchApp(), 1200);
+    return { ok: true };
   });
   ipcMain.handle('window-minimize', () => win.minimize());
   ipcMain.handle('window-maximize', () => {
@@ -2355,6 +2541,259 @@ async function launchApp(): Promise<void> {
   });
   // Measure once shortly after start-up, so even the first search of a session has numbers ready.
   setTimeout(() => { if (config.get('matchmaker')?.enabled) void refreshRegionPings(); }, 8000);
+
+  // Automatic backups: list them and restore one by file name (the name is checked, never used as a path)
+  ipcMain.handle('backup-list', () => ({ items: listAutoBackups(join(app.getPath('userData'), 'KRH Client', 'backups')) }));
+  ipcMain.handle('backup-restore-file', async (_e, file: unknown) => {
+    const full = autoBackupPath(join(app.getPath('userData'), 'KRH Client', 'backups'), file);
+    if (!full) return { ok: false, error: 'That backup is not available any more.' };
+    const c = backupContext();
+    if (!c) return { ok: false, error: 'Not available in safe mode.' };
+    const r = await restoreBackup(c, full);
+    if (r.ok) setTimeout(() => relaunchApp(), 1400);
+    return r;
+  });
+  setTimeout(maybeScheduledBackup, 90_000);
+  setInterval(maybeScheduledBackup, 6 * 3600_000);
+  // Extra copy of every automatic backup in a folder the user picks (the setting is owned by the main process)
+  ipcMain.handle('backup-copy-dir-get', () => getExtras().backupCopyDir);
+  ipcMain.handle('backup-copy-dir-pick', async () => {
+    const parent = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null;
+    const opts = { title: 'Folder for backup copies', properties: ['openDirectory' as const, 'createDirectory' as const] };
+    const r = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
+    const dir = r.filePaths[0];
+    if (r.canceled || !dir) return { ok: false, canceled: true };
+    try { if (!statSync(dir).isDirectory()) return { ok: false, error: 'That is not a folder.' }; } catch { return { ok: false, error: 'That folder cannot be read.' }; }
+    config.set('extras', { ...getExtras(), backupCopyDir: dir.slice(0, 500) });
+    return { ok: true, dir };
+  });
+  ipcMain.handle('backup-copy-dir-clear', () => { config.set('extras', { ...getExtras(), backupCopyDir: '' }); return true; });
+  ipcMain.handle('backup-copy-now', () => {
+    const dir = getExtras().backupCopyDir.trim();
+    if (!dir) return { ok: false, error: 'Choose a folder first.' };
+    const bdir = join(app.getPath('userData'), 'KRH Client', 'backups');
+    const items = listAutoBackups(bdir).slice(0, 6);
+    if (!items.length) return { ok: false, error: 'There are no automatic backups yet.' };
+    let n = 0;
+    for (const b of items) if (copyAutoBackup(join(bdir, b.file), dir)) n++;
+    return n ? { ok: true, count: n } : { ok: false, error: 'Could not copy to that folder.' };
+  });
+  ipcMain.handle('open-backup-folder', async () => {
+    const dir = join(app.getPath('userData'), 'KRH Client', 'backups');
+    try { mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+    return (await shell.openPath(dir)) === '';
+  });
+  // FPS per map and class: windows reported by the game page (only its own window may report)
+  ipcMain.on('fps-sample', (e, s: { map?: unknown; cls?: unknown; fps?: unknown; low?: unknown } | null) => {
+    if (e.sender !== win.webContents || !s || typeof s !== 'object' || !getExtras().fpsStats.enabled) return;
+    recordFpsSample(s.map, s.cls, s.fps, s.low);
+    if (typeof s.fps === 'number') recordFpsForRound(s.fps);
+  });
+  ipcMain.handle('fps-stats-get', () => getFpsStats());
+  ipcMain.handle('fps-stats-reset', () => { resetFpsStats(); return true; });
+  // Performance changes: this week against last week (FPS per map, ping per region), with what changed lately for context
+  initTrends(appVersion);
+  ipcMain.handle('perf-trends-get', () => {
+    const view = trendsView();
+    const weekAgo = Date.now() - 7 * 86_400_000;
+    const changes = settingsHistory().filter((e) => e.at >= weekAgo).map((e) => ({ at: e.at, label: humanize(e.key), fields: e.fields.map(humanize) })).slice(-6);
+    return { ...view, changes };
+  });
+  // A quiet notification a few minutes after start when something got clearly worse (once for the same findings)
+  setTimeout(() => {
+    if (!getExtras().perfWarnings || safeMode || !Notification.isSupported()) return;
+    const found = takeNewFindings();
+    if (!found.length) return;
+    const body = found.slice(0, 2).map((f) => f.text).join('\n') + (found.length > 2 ? `\nand ${found.length - 2} more` : '') + '\nSee Settings > Extras > Performance Changes.';
+    new Notification({ title: 'KRH Client: performance changed', body, silent: true }).show();
+  }, 180_000);
+  /** The Performance Doctor with the client's live settings (used by Dashboard > Diagnostics and the ready check). */
+  function runPerf(): ReturnType<typeof runPerfDoctor> {
+    return runPerfDoctor({
+      performance: () => (config.get('performance') ?? {}) as { fpsUnlocked?: boolean; frameCap?: number; cpuThrottle?: number; cpuThrottleMenu?: number; processPriority?: string },
+      advanced: () => (config.get('advanced') ?? {}) as { gpuProfile?: string; ignoreDisplayScaling?: boolean; perfTweaks?: boolean },
+      instantReplayOn: () => (config.get('extras') as Partial<ExtrasConfig> | undefined)?.instantReplay?.enabled === true,
+      gameActive: () => gameActive,
+      gameWindow: () => (win.isDestroyed() ? null : win),
+      version: appVersion,
+    });
+  }
+  // Ready to play: a short network test, the scripts, Safe Mode, performance drops and the FPS settings in one answer
+  ipcMain.handle('ready-check-run', async () => {
+    const [net, perf] = await Promise.all([
+      runNetDoctor({ tcpPing, osPing, fetchPingList, serverMap: SERVER_MAP }, true).catch(() => null),
+      runPerf().catch(() => null),
+    ]);
+    const hunt = huntState();
+    return buildReady({
+      network: net ? { level: net.level, headline: net.headline } : null,
+      scripts: [...scriptHealth.values()],
+      gameRunning: gameActive && !win.isDestroyed(),
+      huntPhase: hunt ? hunt.phase : null,
+      huntCulprit: hunt?.culprit,
+      safeMode,
+      trendFindings: trendsView().findings.map((f) => f.text),
+      perf: (perf?.items ?? []).filter((x): x is typeof x & { level: 'warn' | 'bad' } => x.level === 'warn' || x.level === 'bad'),
+    });
+  });
+  // Storage manager: sizes of the client's folders and cleaning of old logs, backups, replay clips and the web cache
+  const khDir = (): string => join(app.getPath('userData'), 'KRH Client');
+  const storageDirs = (): Record<string, string> => ({
+    logs: join(app.getPath('userData'), 'logs'),
+    backups: join(khDir(), 'backups'),
+    clips: recordingsDir(),
+    recordings: recordingsDir(),
+    data: khDir(),
+    scripts: join(config.get('userscripts')?.path || khDir(), 'scripts'),
+    css: join(khDir(), 'user-css'),
+    swapper: config.get('swapper')?.path || '',
+  });
+  const cacheDirs = (): string[] => ['Cache', 'Code Cache', 'GPUCache'].map((n) => join(app.getPath('userData'), n));
+  ipcMain.handle('storage-report', async (): Promise<StorageEntry[]> => {
+    const dirs = storageDirs();
+    const entry = (id: string, label: string, s: { bytes: number; files: number; partial: boolean }, clean: StorageEntry['clean'], openable = true): StorageEntry => ({ id, label, bytes: s.bytes, files: s.files, partial: s.partial, clean, openable });
+    const clips = await listClips(dirs.clips);
+    const clipBytes = totalSize(clips.map((c) => ({ name: c.file, mtime: c.at, size: c.size })));
+    const rec = await dirSize(dirs.recordings);
+    const caches = await Promise.all(cacheDirs().map((d) => dirSize(d)));
+    const dataFiles = await listFiles(dirs.data, /\.json$/i);
+    const out: StorageEntry[] = [
+      entry('logs', 'Logs', await dirSize(dirs.logs), 'days'),
+      entry('backups', 'Automatic backups', await dirSize(dirs.backups), 'days'),
+      entry('clips', 'Replay clips', { bytes: clipBytes, files: clips.length, partial: false }, 'days'),
+      entry('recordings', 'Recordings folder (all videos)', rec, ''),
+      { id: 'cache', label: 'Web cache', bytes: caches.reduce((n, c) => n + c.bytes, 0), files: caches.reduce((n, c) => n + c.files, 0), partial: caches.some((c) => c.partial), clean: 'cache', openable: false },
+      entry('data', 'Client data files (statistics, histories, lists)', { bytes: totalSize(dataFiles), files: dataFiles.length, partial: false }, ''),
+      entry('scripts', 'Userscripts', await dirSize(dirs.scripts), ''),
+      entry('css', 'Custom CSS', await dirSize(dirs.css), ''),
+    ];
+    if (dirs.swapper) out.push(entry('swapper', 'Resource swapper folder', await dirSize(dirs.swapper), ''));
+    return out;
+  });
+  ipcMain.handle('storage-open', async (_e, id: unknown) => {
+    const dirs = storageDirs();
+    const dir = typeof id === 'string' && Object.prototype.hasOwnProperty.call(dirs, id) ? dirs[id] : '';
+    return dir ? (await shell.openPath(dir)) === '' : false;
+  });
+  ipcMain.handle('storage-clean', async (_e, id: unknown, rawDays: unknown) => {
+    const dirs = storageDirs();
+    const now = Date.now();
+    const days = cleanDays(rawDays);
+    let label: string;
+    let count: number;
+    let bytes: number;
+    let run: () => Promise<number>;
+    if (id === 'cache') {
+      label = 'the web cache';
+      const caches = await Promise.all(cacheDirs().map((d) => dirSize(d)));
+      count = caches.reduce((n, c) => n + c.files, 0);
+      bytes = caches.reduce((n, c) => n + c.bytes, 0);
+      run = async () => { await win.webContents.session.clearCache(); await win.webContents.session.clearCodeCaches({}); return count; };
+    } else if (days === null) {
+      return { ok: false, error: 'Choose 30, 90 or 180 days.' };
+    } else if (id === 'logs') {
+      label = 'Logs';
+      const current = basename(getLogPath());
+      const files = (await listFiles(dirs.logs, /^electron-\d{4}-\d{2}-\d{2}\.log$/)).filter((f) => f.name !== current);
+      const old = olderThan(files, days, now, 1);
+      count = old.length; bytes = totalSize(old);
+      run = () => removeFiles(dirs.logs, old.map((f) => f.name));
+    } else if (id === 'backups') {
+      label = 'Automatic backups';
+      const all = listAutoBackups(dirs.backups);
+      const old: FileInfo[] = [];
+      for (const kind of ['pre-update', 'scheduled'] as const) {
+        old.push(...olderThan(all.filter((b) => b.kind === kind).map((b) => ({ name: b.file, mtime: b.at, size: b.size })), days, now, 1));
+      }
+      count = old.length; bytes = totalSize(old);
+      run = () => removeFiles(dirs.backups, old.map((f) => f.name));
+    } else if (id === 'clips') {
+      label = 'Replay clips';
+      const old = olderThan((await listClips(dirs.clips)).map((c) => ({ name: c.file, mtime: c.at, size: c.size })), days, now, 0);
+      count = old.length; bytes = totalSize(old);
+      run = async () => { let n = 0; for (const f of old) if (await deleteClip(dirs.clips, f.name)) n++; return n; };
+    } else {
+      return { ok: false, error: 'That cannot be cleaned here.' };
+    }
+    if (!count) return { ok: true, count: 0, bytes: 0, message: planText(label, 0, 0, days) };
+    const parent = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null;
+    const opts = {
+      type: 'question' as const, title: 'KRH Client', message: `Clean ${label}?`,
+      detail: planText(label, count, bytes, days) + (id === 'clips' ? '\n\nThe clips are moved to the recycle bin.' : id === 'cache' ? '\n\nThe game loads its files again the next time, so the first start afterwards can be slower.' : '\n\nThe newest ones are always kept.'),
+      buttons: ['Clean', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+    };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response !== 0) return { ok: false, canceled: true };
+    const done = await run();
+    electronLog.log(`[KRH-Storage] Cleaned ${label}: ${done} of ${count} files (${bytes} bytes)`);
+    return { ok: true, count: done, bytes };
+  });
+  // Earlier versions: only for the installed Windows build (the same kind that updates itself); others get the releases page
+  const canRollBack = (): boolean => app.isPackaged && process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_DIR && !process.env.APPIMAGE;
+  ipcMain.handle('rollback-list', async () => {
+    if (!canRollBack()) return { eligible: false, ok: true, releases: [] };
+    const r = await listPastReleases(appVersion);
+    return { eligible: true, ok: r.ok, releases: r.releases.map((x) => ({ version: x.version, fileSize: x.fileSize })), current: appVersion };
+  });
+  ipcMain.handle('rollback-open-releases', () => { void shell.openExternal(RELEASES_URL.replace(/\/latest$/, '')); return true; });
+  ipcMain.handle('rollback-install', async (_e, version: unknown) => {
+    if (!canRollBack() || typeof version !== 'string') return { ok: false, error: 'Not available for this build.' };
+    // The address and the digest always come from the GitHub list, never from the page
+    const found = (await listPastReleases(appVersion, 15)).releases.find((r) => r.version === version);
+    if (!found) return { ok: false, error: 'That version is not available any more.' };
+    const parent = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null;
+    const opts = {
+      type: 'warning' as const, title: 'KRH Client', message: `Go back to version ${found.version}?`,
+      detail: `You run ${appVersion}. This downloads the installer of ${found.version} (${(found.fileSize / 1048576).toFixed(0)} MB), saves a backup of your settings first, then closes the client and starts that installer.\n\nYour settings and scripts stay, but settings that only newer versions know are ignored. The update prompt will skip ${appVersion} afterwards but still offer newer versions.`,
+      buttons: ['Go back', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+    };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response !== 0) return { ok: false, canceled: true };
+    runAutoBackup('pre-update', true);
+    const dest = join(app.getPath('temp'), `KRH-Client-${found.version}-Setup.exe`);
+    try {
+      await downloadUpdate(found.downloadUrl, dest, (pct) => { if (!win.isDestroyed()) win.setProgressBar(Math.max(0, Math.min(1, pct / 100))); }, found.sha256);
+    } catch (err) {
+      if (!win.isDestroyed()) win.setProgressBar(-1);
+      electronLog.error('[KRH-Update] Rollback download failed:', err);
+      return { ok: false, error: 'The download failed: ' + (err as Error).message };
+    }
+    if (!win.isDestroyed()) win.setProgressBar(-1);
+    // Do not offer the version we are leaving again, but still offer newer ones
+    config.set('ui', { ...DEFAULT_CONFIG.ui, ...config.get('ui'), skippedUpdateVersion: appVersion });
+    electronLog.log(`[KRH-Update] Going back from ${appVersion} to ${found.version}`);
+    installUpdate(dest);
+    return { ok: true };
+  });
+  // Play log (K/D by ping, rounds) and connection journal: ten-second samples from the game page while you are in a match
+  ipcMain.on('play-sample', (e, raw: unknown) => {
+    if (e.sender !== win.webContents || !gameActive || safeMode || !getExtras().playLog.enabled || !raw || typeof raw !== 'object') return;
+    const r = raw as Record<string, unknown>;
+    const ctx = cleanClipContext({ map: r.map, cls: r.cls, streak: 0 });
+    const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    recordPlaySample({ map: ctx.map, cls: ctx.cls, ms: n(r.ms), kills: n(r.kills), deaths: n(r.deaths), dt: n(r.dt) }, !!_pingTarget, typeof r.region === 'string' ? r.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '');
+  });
+  ipcMain.handle('play-log-get', () => playLogView());
+  ipcMain.handle('play-log-reset', () => { resetPlayLog(); return true; });
+  ipcMain.handle('journal-get', () => journalView());
+  ipcMain.handle('journal-clear', () => { clearJournal(); return true; });
+  // Weekly summary: once on the first start of a calendar week, a quiet notification about last week (nothing without play)
+  const weeklyFor = (): ReturnType<typeof buildWeekly> => buildWeekly(allSessions(), Date.now(), trendsView().findings.map((f) => f.text));
+  ipcMain.handle('weekly-summary-get', () => ({ preview: weeklyFor()?.text ?? '', last: weeklyState().lastText, lastWeekStart: weeklyState().lastWeekStart }));
+  setTimeout(() => {
+    if (!getExtras().weeklySummary || safeMode) return;
+    const current = weekKey(Date.now());
+    if (weeklyState().sentWeek === current) return;
+    const summary = weeklyFor();
+    markWeekly(current, summary);
+    if (!summary || !Notification.isSupported()) return;
+    new Notification({ title: 'KRH Client: your week', body: summary.lines.slice(0, 3).join('\n') + '\nSee Settings > Extras > Weekly Summary.', silent: true }).show();
+  }, 240_000);
+  // Network doctor: DNS, a few well-known hosts and the region servers, then a plain verdict (see net-doctor.ts)
+  ipcMain.handle('net-doctor-run', () => runNetDoctor({ tcpPing, osPing, fetchPingList, serverMap: SERVER_MAP }));
+  // Ping history: per region and hour of the day, read by Settings > Extras
+  ipcMain.handle('ping-history-get', () => ({ history: getPingHistory(), hour: new Date().getHours() }));
+  ipcMain.handle('ping-history-reset', () => { resetPingHistory(); return true; });
 
   ipcMain.handle('get-official-maps', () => loadOfficialMaps());
 
@@ -2456,7 +2895,7 @@ async function launchApp(): Promise<void> {
 
   // ── Share codes (profiles, crosshair, pack loadouts) ──
   ipcMain.handle('share-encode', (_e, kind: unknown, name: unknown, data: unknown) => {
-    try { return { ok: true, code: encodeShare(kind as 'profile' | 'crosshair' | 'loadout', String(name || ''), data) }; }
+    try { return { ok: true, code: encodeShare(kind as 'profile' | 'crosshair' | 'loadout' | 'autoprofile', String(name || ''), data) }; }
     catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('share-decode', (_e, code: unknown) => {
@@ -2468,6 +2907,12 @@ async function launchApp(): Promise<void> {
       return { ok: true, kind: 'profile', name: r.name || 'Shared profile', data: d.data };
     }
     if (r.kind === 'crosshair') return { ok: true, kind: 'crosshair', name: r.name, data: sanitizeCrosshair(r.data) };
+    if (r.kind === 'autoprofile') {
+      const d = r.data as { rule?: unknown; presets?: unknown } | null;
+      const rule = normaliseAutoProfiles({ rules: d && typeof d === 'object' ? [d.rule] : [] }, (c) => sanitizeCrosshair(c)).rules[0];
+      if (!rule) return { ok: false, error: 'The rule in this code is not valid' };
+      return { ok: true, kind: 'autoprofile', name: r.name || rule.name, rule, presets: normalisePresets(d?.presets).slice(0, 2) };
+    }
     const arr = (r.data as { packs?: unknown } | null)?.packs;
     if (!Array.isArray(arr)) return { ok: false, error: 'The loadout in this code is not valid' };
     const packs = arr.slice(0, 50)
@@ -2599,12 +3044,50 @@ async function launchApp(): Promise<void> {
   });
   ipcMain.handle('session-stats-get', (e) => (e.sender === win.webContents ? getStats() : null));
   ipcMain.handle('session-stats-clear', (e) => { if (e.sender === win.webContents) clearStats(); });
+  ipcMain.handle('session-stats-tag', (e, tag: unknown) => (e.sender === win.webContents ? setSessionTag(tag) : ''));
+  // CSV export of every saved session: asks where to save, then writes the file (UTF-8 with a BOM so Excel reads it right).
+  ipcMain.handle('session-stats-export', async (e) => {
+    if (e.sender !== win.webContents) return { ok: false, error: 'not allowed' };
+    const sessions = allSessions();
+    if (!sessions.length) return { ok: false, error: 'No sessions saved yet' };
+    const stamp = new Date().toISOString().slice(0, 10);
+    const r = await dialog.showSaveDialog(win, { title: 'Export sessions', defaultPath: 'krh-sessions-' + stamp + '.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (r.canceled || !r.filePath) return { ok: false, error: '' };
+    try {
+      writeFileSync(r.filePath, '\uFEFF' + sessionsToCsv(sessions), 'utf-8');
+      return { ok: true, count: sessions.length };
+    } catch (err) {
+      electronLog.warn('[KRH-Stats] CSV export failed:', (err as Error).message);
+      return { ok: false, error: 'Could not write the file' };
+    }
+  });
 
   // ── Instant replay ──
-  ipcMain.handle('replay-save', async (e) => {
+  ipcMain.handle('replay-save', async (e, ctx?: unknown) => {
     if (e.sender !== win.webContents || !gameActive || !getExtras().instantReplay.enabled) return false;
-    await saveReplayClip();
+    await saveReplayClip(cleanClipContext(ctx));
     return true;
+  });
+  // Clip gallery (Settings > Extras > Replay Clips): list, open, show in folder, rename, delete
+  ipcMain.handle('clips-list', async () => (await listClips(recordingsDir())).map((c) => ({ ...c, label: c.title || autoTitle(c), sizeText: clipSizeText(c.size) })));
+  ipcMain.handle('clip-open', async (_e, name: unknown) => {
+    const p = await clipPath(recordingsDir(), name);
+    return p ? (await shell.openPath(p)) === '' : false;
+  });
+  ipcMain.handle('clip-reveal', async (_e, name: unknown) => {
+    const p = await clipPath(recordingsDir(), name);
+    if (p) shell.showItemInFolder(p);
+    return !!p;
+  });
+  ipcMain.handle('clip-rename', (_e, name: unknown, title: unknown) => renameClip(recordingsDir(), name, title));
+  ipcMain.handle('clip-delete', async (_e, name: unknown) => {
+    const p = await clipPath(recordingsDir(), name);
+    if (!p || typeof name !== 'string') return { ok: false, error: 'That clip is not in the list any more.' };
+    const parent = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isFocused()) ?? null;
+    const opts = { type: 'question' as const, title: 'KRH Client', message: 'Delete this clip?', detail: name + '\n\nIt is moved to the recycle bin.', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response !== 0) return { ok: false, canceled: true };
+    return { ok: await deleteClip(recordingsDir(), name) };
   });
 
   // ── Updates: state for the settings page ──
@@ -2654,9 +3137,17 @@ async function launchApp(): Promise<void> {
     return getLoadingScreenCSS(loadingTheme, backgroundUrl, swapDir);
   });
 
-  // ── Changelog IPC handler (fetch release notes from GitHub) ──
+  // ── Changelog IPC handler (bundled release notes first, GitHub as fallback) ──
   const fetchChangelog = async (version: string): Promise<string> => {
     const tag = version.startsWith('v') ? version : `v${version}`;
+    // The notes of this version ship inside the app (release-notes/v<version>.md): shown at once, with no network and no
+    // GitHub rate limit. Only when that file is missing (an older build, a dev checkout) the GitHub release text is used.
+    if (/^v\d+(\.\d+){1,3}$/.test(tag)) {
+      try {
+        const local = readFileSync(join(app.getAppPath(), 'release-notes', tag + '.md'), 'utf-8').trim();
+        if (local) return local;
+      } catch { /* not bundled: ask GitHub */ }
+    }
     try {
       const data = await new Promise<string>((resolve, reject) => {
         httpsGet(`https://api.github.com/repos/KNLZVXAura/Krunker-Resource-Hub-Client/releases/tags/${tag}`, { headers: { 'User-Agent': 'KRH' } }, (res) => {
@@ -2686,8 +3177,16 @@ async function launchApp(): Promise<void> {
     if (!userscriptManager) return { scripts: [], tracker: {} };
     const scripts = await userscriptManager.scanScripts();
     const tracker = await userscriptManager.loadTracker(scripts);
+    // Scripts that changed outside the client since the last game start: one quiet notification, details in Script Health
+    const changes = safeMode ? [] : checkScripts(scripts);
+    if (changes.length && Notification.isSupported()) {
+      const body = changes.slice(0, 2).map(changeLine).join('\n') + (changes.length > 2 ? `\nand ${changes.length - 2} more` : '') + '\nSee Settings > Userscripts > Script Health.';
+      new Notification({ title: 'KRH Client: userscripts changed', body, silent: true }).show();
+    }
     return { scripts, tracker };
   });
+  ipcMain.handle('script-changes-get', () => changeLog());
+  ipcMain.handle('script-changes-clear', () => { clearChangeLog(); return true; });
   ipcMain.handle('userscripts-set-tracker', (_e, tracker: Record<string, boolean>) => {
     if (userscriptManager) userscriptManager.saveTracker(tracker);
   });
@@ -2698,6 +3197,102 @@ async function launchApp(): Promise<void> {
     if (ok && !win.isDestroyed()) win.webContents.send('builtin-scripts-changed', filename, enabled);
     return ok;
   });
+  // Script hunt: switches scripts off in halves to find the one that causes a problem (see script-hunt.ts)
+  const huntBackend: HuntBackend = {
+    async listEnabled() {
+      const names: string[] = builtinScripts ? builtinScripts.list().filter((s) => s.enabled).map((s) => s.filename) : [];
+      if (userscriptManager) {
+        const scripts = await userscriptManager.scanScripts();
+        const tracker = await userscriptManager.loadTracker(scripts);
+        for (const s of scripts) if (tracker[s.filename] === true) names.push(s.filename);
+      }
+      return names;
+    },
+    async recent() {
+      // Folder scripts changed in the last 14 days are searched first
+      const out: string[] = [];
+      if (!userscriptManager) return out;
+      for (const s of await userscriptManager.scanScripts()) {
+        try { if (Date.now() - statSync(s.fullpath).mtimeMs < 14 * 86_400_000) out.push(s.filename); } catch { /* gone */ }
+      }
+      return out;
+    },
+    async setEnabled(filename, enabled) {
+      if (isBuiltinFilename(filename)) {
+        if (builtinScripts?.setEnabled(filename, enabled) && !win.isDestroyed()) win.webContents.send('builtin-scripts-changed', filename, enabled);
+        return;
+      }
+      if (!userscriptManager) return;
+      const scripts = await userscriptManager.scanScripts();
+      const tracker = await userscriptManager.loadTracker(scripts);
+      if (!(filename in tracker)) return;
+      tracker[filename] = enabled;
+      await userscriptManager.saveTracker(tracker);
+    },
+  };
+  // Offer the script search when the game connection drops again and again soon after it opens (a broken userscript does that)
+  let connDrops: ConnDrop[] = [];
+  let huntOffered = false;
+  ipcMain.on('conn-lost', (e, raw: unknown) => {
+    if (e.sender !== win.webContents || safeMode) return;
+    // The connection journal notes every unexpected close (not only the short-lived ones the script search cares about)
+    if (getExtras().playLog.enabled && raw && typeof raw === 'object') {
+      const r = raw as { code?: unknown; region?: unknown; clean?: unknown; game?: unknown };
+      // Only the game socket (its host starts with lobby-, like the ping target), and not a clean close without a status code
+      // (1005): that is what leaving a game or hopping to another server looks like. The script search below still sees every close.
+      const leaving = r.clean === true && r.code === 1005;
+      if (typeof r.code === 'number' && r.game !== false && !leaving) recordDrop(r.code, typeof r.region === 'string' ? r.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '');
+    }
+    const ev = cleanClose(raw, Date.now());
+    if (!ev) return;
+    connDrops = addDrop(connDrops, ev);
+    if (huntOffered || !shouldOffer(connDrops, Date.now()) || !getExtras().offerScriptHunt) return;
+    if (huntState()?.phase === 'testing') return;
+    huntOffered = true; // at most once for each start of the client
+    void (async () => {
+      if (!(await huntBackend.listEnabled()).length) return;
+      electronLog.warn('[KRH-Hunt] The game connection dropped ' + connDrops.length + ' times in a row soon after opening; offering the script search');
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question', title: 'KRH Client', message: 'The game connection keeps dropping',
+        detail: 'It was lost several times within a few minutes of joining. A userscript can cause that. Do you want the client to look for one? It switches your scripts off in halves and you test the game after each step. Your scripts are switched back on at the end, except the one found.',
+        buttons: ['Find the script', 'Not now', "Don't ask again"], defaultId: 1, cancelId: 1, noLink: true,
+      });
+      if (response === 2) { config.set('extras', { ...getExtras(), offerScriptHunt: false }); return; }
+      if (response !== 0) return;
+      const r = await startScriptHunt(huntBackend);
+      if (!r.ok) { dialog.showErrorBox('KRH Client', r.error || 'Could not start the search.'); return; }
+      void dialog.showMessageBox(win, {
+        type: 'info', title: 'KRH Client', message: 'Every script is switched off for the first test',
+        detail: 'Reload the game (F5) and try to make the problem happen. Then open Settings > Userscripts > Find The Problem Script and answer whether it still happens.',
+        buttons: ['OK'], noLink: true,
+      });
+    })();
+  });
+  ipcMain.handle('script-hunt-offer-get', () => getExtras().offerScriptHunt);
+  ipcMain.handle('script-hunt-offer-set', (_e, on: unknown) => { config.set('extras', { ...getExtras(), offerScriptHunt: on === true }); return true; });
+  ipcMain.handle('script-hunt-state', () => huntState());
+  ipcMain.handle('script-hunt-start', () => startScriptHunt(huntBackend));
+  ipcMain.handle('script-hunt-answer', (_e, stillThere: unknown) => answerScriptHunt(huntBackend, stillThere === true));
+  ipcMain.handle('script-hunt-end', async () => { await endScriptHunt(huntBackend); return true; });
+  // Auto profiles: CSS files that a rule adds on top of the normal ones while it is active (only the game window may ask).
+  ipcMain.handle('profile-css', (e, names: unknown) => {
+    if (e.sender !== win.webContents || safeMode || !Array.isArray(names)) return '';
+    let css = '';
+    for (const n of names.slice(0, 8)) {
+      const text = userCss.read(n);
+      if (text && css.length + text.length < 2 * 1024 * 1024) css += text + '\n';
+    }
+    return css;
+  });
+  // Script health: the game page reports how each script is doing, the dashboard and the settings read it here.
+  ipcMain.on('script-health', (_e, list: unknown) => {
+    if (!Array.isArray(list)) return;
+    for (const raw of list.slice(0, 200)) {
+      const h = cleanHealth(raw);
+      if (h) scriptHealth.set(h.filename, h);
+    }
+  });
+  ipcMain.handle('script-health-get', () => ({ live: gameActive && !win.isDestroyed(), list: [...scriptHealth.values()] }));
   ipcMain.on('builtin-script-error', (_e, filename: unknown, msg: unknown) => {
     if (!isBuiltinFilename(filename) || win.isDestroyed()) return;
     electronLog.warn('[KRH] Built-in script failed:', filename, String(msg).slice(0, 200));
@@ -2961,7 +3556,8 @@ async function launchApp(): Promise<void> {
     stopReplayBuffer();
     const ended = endSession();
     if (ended && getExtras().sessionStats.summary && Notification.isSupported()) {
-      new Notification({ title: 'KRH session summary', body: summaryText(ended), silent: true }).show();
+      const cmp = compareText(ended, allSessions().filter((s) => s !== ended));
+      new Notification({ title: 'KRH session summary', body: summaryText(ended) + (cmp ? '\n' + cmp : ''), silent: true }).show();
     }
     win.webContents.setAudioMuted(true);
     win.webContents.stop();
@@ -2983,6 +3579,11 @@ async function launchApp(): Promise<void> {
   app.on('will-quit', () => {
     releaseEscapeShortcut();
     flushStats();
+    flushPingHistory();
+    flushFpsStats();
+    flushSettingsHistory();
+    flushTrends();
+    flushPlayLog();
     installOnQuitIfWanted();
     markCleanQuit();
     discordRpc?.disconnect();

@@ -10,6 +10,9 @@ import { join } from 'path';
 import { createWriteStream, mkdirSync, writeFileSync, WriteStream, promises as fsp } from 'fs';
 import { config } from './config';
 import { electronLog } from './logger';
+import { recordClip } from './clips';
+import { fileSuffix } from '../shared/clips';
+import type { ClipContext } from '../shared/clips';
 
 const BITRATES: Record<string, number> = { Low: 6_000_000, Medium: 12_000_000, High: 25_000_000 };
 
@@ -379,7 +382,7 @@ export function buildClip(first: Buffer, pieces: Buffer[], mime: string): Buffer
   return Buffer.concat([init, body]);
 }
 
-export async function saveReplayClip(): Promise<void> {
+export async function saveReplayClip(ctx: ClipContext = { map: '', cls: '', streak: 0 }): Promise<void> {
   if (repState !== 'running' || !repFirst) { toast('Instant replay is not running'); return; }
   if (repSaving) return;
   const pieces = repRing.map((r) => r.buf);
@@ -392,8 +395,10 @@ export async function saveReplayClip(): Promise<void> {
     const dir = recordingsDir();
     await fsp.mkdir(dir, { recursive: true });
     const ext = repMime.startsWith('video/mp4') ? '.mp4' : '.webm';
-    const path = join(dir, `Krunker_replay_${stamp()}${ext}`);
+    const fileName = `Krunker_replay_${stamp()}${fileSuffix(ctx)}${ext}`;
+    const path = join(dir, fileName);
     await fsp.writeFile(path, bytes);
+    recordClip({ file: fileName, at: now, map: ctx.map, cls: ctx.cls, streak: ctx.streak, seconds: Math.min(repSeconds, keep.length || pieces.length), size: bytes.length, title: '' });
     electronLog.log(`[KRH] Instant replay clip saved: ${path} (${fmtSize(bytes.length)})`);
     toast(`Clip saved (last ${Math.min(repSeconds, keep.length || pieces.length)} s, ${fmtSize(bytes.length)})`);
   } catch (err) {

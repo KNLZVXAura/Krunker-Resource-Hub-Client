@@ -4,6 +4,7 @@
 // sandboxed and can't pull Node modules, but it can import this for the single
 // source of truth on defaults. config.ts wraps DEFAULT_CONFIG in the actual Store.
 import type { SettingPreset } from '../shared/presets';
+import type { AutoProfiles } from '../shared/auto-profiles';
 
 
 // Sky dome textures are referenced by user-asset ID. This one is deliberately not a
@@ -108,6 +109,26 @@ export interface ExtrasConfig {
   /** EXPERIMENTAL: run the game's frame on its own timer between screen frames, drawing only once per screen frame. */
   gameLoop: { enabled: boolean; intervalMs: number };
   perfHud: { key: string; corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; detail: 'fps' | 'full'; startOn: boolean };
+  /** Measure FPS per map and per class while you play (a light animation-frame counter, only during matches). */
+  fpsStats: { enabled: boolean };
+  /** Write a backup into <userData>/KRH Client/backups before an update is installed (the newest 3 are kept). */
+  autoBackup: boolean;
+  /** Sample ping, kills and deaths every ten seconds in a match for the play log (K/D by ping, rounds) and the connection journal. */
+  playLog: { enabled: boolean };
+  /** One quiet notification on the first start of a week with last week's play time, K/D and best map. */
+  weeklySummary: boolean;
+  /** Notify (once) when FPS on a map or ping to a region got clearly worse than last week. */
+  perfWarnings: boolean;
+  /** Offer to look for a broken userscript after the game connection dropped several times in a row soon after opening. */
+  offerScriptHunt: boolean;
+  /** Folder that also gets a copy of every automatic backup (for example a OneDrive folder). Only set through the folder dialog in the main process, never by a settings page. */
+  backupCopyDir: string;
+  /** How often a backup is written without being asked (the newest 3 are kept, apart from the ones made before updates). */
+  backupSchedule: 'off' | 'daily' | 'weekly';
+  /** Auto profiles: rules that switch sensitivity / FOV presets, the crosshair and extra CSS by class, mode or map (see shared/auto-profiles.ts). */
+  autoProfiles: AutoProfiles<ExtrasConfig['crosshair']>;
+  /** Network HUD: ping, jitter, loss and a small graph, toggled with `key` (a combo such as Ctrl+Alt+H). */
+  netHud: { key: string; corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; startOn: boolean; suggestRegion: boolean };
   /** Extra Discord presence features. Each needs matching Art Assets in the Discord app (see DISCORD-ART.md). */
   rpcRich: {
     /** Small class icon on the presence (asset key class_<name>). */
@@ -139,6 +160,10 @@ export interface ExtrasConfig {
     /** Show a summary notification when the game window is closed. */
     summary: boolean;
     key: string;
+    /** Kills per day to aim for; a message shows when it is reached (0 = off). */
+    dailyKillGoal: number;
+    /** Suggest a short break after this many minutes of play without a pause of 5 minutes or more (0 = off). */
+    breakMinutes: number;
   };
   /** Installed resource packs that are switched on (in order) and saved sets of packs. */
   packs: { enabled: string[]; loadouts: Array<{ name: string; ids: string[] }> };
@@ -523,13 +548,23 @@ export const DEFAULT_CONFIG: AppConfig = {
     serverFilter: { enabled: false, words: 'infect, trade, trading, fun-parkour' },
     gameLoop: { enabled: false, intervalMs: 8 },
     perfHud: { key: 'F10', corner: 'top-left', detail: 'full', startOn: false },
+    netHud: { key: 'Ctrl+Alt+H', corner: 'top-right', startOn: false, suggestRegion: true },
+    fpsStats: { enabled: true },
+    autoBackup: true,
+    playLog: { enabled: true },
+    weeklySummary: true,
+    perfWarnings: true,
+    offerScriptHunt: true,
+    backupCopyDir: '',
+    backupSchedule: 'weekly',
+    autoProfiles: { enabled: false, rules: [] },
     rpcRich: { classIcon: true, mapArt: true, join: false },
     updateMode: 'ask',
     updateInstallOnQuit: false,
     streamerMode: false,
     streamerKey: 'Ctrl+Alt+M',
     instantReplay: { enabled: false, seconds: 30, key: 'Ctrl+Alt+R', autoStreak: 0 },
-    sessionStats: { enabled: true, summary: true, key: 'Ctrl+Alt+K' },
+    sessionStats: { enabled: true, summary: true, key: 'Ctrl+Alt+K', dailyKillGoal: 0, breakMinutes: 0 },
     packs: { enabled: [], loadouts: [] },
     layoutEditorKey: 'Ctrl+Alt+L',
   },

@@ -345,6 +345,12 @@ ${THEME_CSS}
 .krh-select:focus, .krh-input:focus { border-color: var(--krh-border-focus); }
 .krh-select option { background: var(--krh-surface-raised); color: var(--krh-text-primary); }
 .krh-input::placeholder { color: var(--krh-text-faint); }
+.krh-health { display: inline-block; min-width: 46px; text-align: center; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.krh-health-ok { background: rgba(80, 200, 120, 0.18); color: #6fe3a0; }
+.krh-health-warn { background: rgba(255, 180, 84, 0.18); color: #ffb454; }
+.krh-health-bad { background: rgba(255, 90, 90, 0.2); color: #ff7b7b; }
+.krh-health-off { background: rgba(255, 255, 255, 0.08); color: var(--krh-text-faint); }
+.krh-key-warn { margin-top: 4px; font-size: 12px; line-height: 1.35; color: #ffb454; }
 
 /* -- Color input -- */
 .krh-color {

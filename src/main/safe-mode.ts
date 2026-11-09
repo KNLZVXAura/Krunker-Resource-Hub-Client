@@ -16,6 +16,9 @@ import { electronLog } from './logger';
 
 interface GuardState { pending: boolean; crashes: number }
 
+/** An extra choice in the crash dialog that fixes the most likely cause instead of switching everything off. */
+export interface Remedy { label: string; detail: string; apply: () => void }
+
 const HEALTHY_AFTER_MS = 25_000;
 const CRASH_LIMIT = 2;
 
@@ -92,7 +95,7 @@ function backupAndResetSettings(): void {
  * Call once at start, before any feature loads. Returns when the launch mode is decided;
  * afterwards isSafeMode() tells the rest of the client.
  */
-export async function beginLaunchGuard(): Promise<void> {
+export async function beginLaunchGuard(getRemedies: () => Remedy[] = () => []): Promise<void> {
   state = readState();
   const forced = process.argv.includes('--safe-mode');
   if (state.pending) state.crashes = Math.min(50, state.crashes + 1);   // last run never quit cleanly
@@ -102,6 +105,11 @@ export async function beginLaunchGuard(): Promise<void> {
     const reason = forced
       ? 'KRH Client was started with --safe-mode.'
       : `KRH Client did not close properly the last ${state.crashes} times it was started.`;
+    // Targeted fixes (undo the last settings change, switch off the newest script) sit between "Start Normally" and "Reset Settings"
+    let remedies: Remedy[];
+    try { remedies = getRemedies(); } catch { remedies = []; }
+    const remedyText = remedies.length ? remedies.map((r) => `\n\n"${r.label}": ${r.detail} Then the client starts normally.`).join('') : '';
+    const resetIndex = 2 + remedies.length;
     const { response } = await dialog.showMessageBox({
       type: 'warning',
       title: 'KRH Client',
@@ -109,23 +117,28 @@ export async function beginLaunchGuard(): Promise<void> {
       detail:
         `${reason}\n\n` +
         'Safe Mode starts the client without userscripts, the resource swapper and packs, custom themes, ' +
-        'overlays (Twitch, Spotify, keystrokes, nuke counter) and the extra features. Your settings are not changed.\n\n' +
+        'overlays (Twitch, Spotify, keystrokes, nuke counter) and the extra features. Your settings are not changed.' +
+        remedyText + '\n\n' +
         '"Reset Settings" saves a backup copy of your settings file first and then starts with default settings ' +
         '(your saved accounts are kept).',
-      buttons: ['Safe Mode', 'Start Normally', 'Reset Settings'],
+      buttons: ['Safe Mode', 'Start Normally', ...remedies.map((r) => r.label), 'Reset Settings'],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
     });
+    let applied = '';
     if (response === 0) {
       safe = true;
-    } else if (response === 2) {
+    } else if (response === resetIndex) {
       backupAndResetSettings();
+      state.crashes = 0;
+    } else if (response >= 2 && response < resetIndex) {
+      try { remedies[response - 2].apply(); applied = remedies[response - 2].label; } catch (err) { electronLog.error('[KRH-Safe] The chosen fix failed:', err); }
       state.crashes = 0;
     } else {
       state.crashes = 0;
     }
-    electronLog.log(`[KRH-Safe] Launch mode: ${safe ? 'SAFE MODE' : response === 2 ? 'normal after reset' : 'normal'}`);
+    electronLog.log(`[KRH-Safe] Launch mode: ${safe ? 'SAFE MODE' : response === resetIndex ? 'normal after reset' : applied ? 'normal after "' + applied + '"' : 'normal'}`);
   }
 
   state.pending = true;

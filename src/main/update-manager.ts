@@ -10,6 +10,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { spawn } from 'child_process';
 import { join } from 'path';
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater';
+import { runPreUpdate } from './pre-update';
 import { updateWithoutInstaller, applyLite, applyLiteAndRelaunch } from './lite-update';
 import { electronLog } from './logger';
 
@@ -97,6 +98,7 @@ export function installOnQuitIfWanted(): void {
       applyLite();
       return;
     }
+    runPreUpdate();
     electronLog.log('[KRH-Update] Installing v' + ready.version + ' silently after quit');
     const child = spawn(ready.path, ['/S'], { detached: true, stdio: 'ignore' });
     child.unref();
