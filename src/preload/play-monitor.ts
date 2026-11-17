@@ -30,7 +30,7 @@ function activity(): { map: string; cls: string } {
 
 async function tick(): Promise<void> {
   if (!enabled || busy) return;
-  if (!inMatch()) { lastAt = 0; return; }
+  if (document.hidden || !inMatch()) { lastAt = 0; return; } // hidden window: no ping, no sample
   busy = true;
   try {
     const now = Date.now();

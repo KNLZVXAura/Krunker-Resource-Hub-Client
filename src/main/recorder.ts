@@ -382,11 +382,14 @@ export function buildClip(first: Buffer, pieces: Buffer[], mime: string): Buffer
   return Buffer.concat([init, body]);
 }
 
-export async function saveReplayClip(ctx: ClipContext = { map: '', cls: '', streak: 0 }): Promise<void> {
-  if (repState !== 'running' || !repFirst) { toast('Instant replay is not running'); return; }
-  if (repSaving) return;
+export interface SavedClip { path: string; fileName: string; size: number; mime: string }
+
+/** Saves the last seconds as a clip. Returns what was saved (null when nothing was). */
+export async function saveReplayClip(ctx: ClipContext = { map: '', cls: '', streak: 0 }): Promise<SavedClip | null> {
+  if (repState !== 'running' || !repFirst) { toast('Instant replay is not running'); return null; }
+  if (repSaving) return null;
   const pieces = repRing.map((r) => r.buf);
-  if (pieces.length === 0) { toast('Not enough recorded yet, try again in a moment'); return; }
+  if (pieces.length === 0) { toast('Not enough recorded yet, try again in a moment'); return null; }
   repSaving = true;
   try {
     const now = Date.now();
@@ -401,9 +404,11 @@ export async function saveReplayClip(ctx: ClipContext = { map: '', cls: '', stre
     recordClip({ file: fileName, at: now, map: ctx.map, cls: ctx.cls, streak: ctx.streak, seconds: Math.min(repSeconds, keep.length || pieces.length), size: bytes.length, title: '' });
     electronLog.log(`[KRH] Instant replay clip saved: ${path} (${fmtSize(bytes.length)})`);
     toast(`Clip saved (last ${Math.min(repSeconds, keep.length || pieces.length)} s, ${fmtSize(bytes.length)})`);
+    return { path, fileName, size: bytes.length, mime: repMime.startsWith('video/mp4') ? 'video/mp4' : 'video/webm' };
   } catch (err) {
     electronLog.error('[KRH] Could not save the replay clip:', err);
     toast('Could not save the clip');
+    return null;
   } finally {
     repSaving = false;
   }

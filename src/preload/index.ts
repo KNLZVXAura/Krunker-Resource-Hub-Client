@@ -395,6 +395,8 @@ ipcRenderer.on('main_did-finish-load', () => {
           enabled: ex.sessionStats?.enabled ?? true,
           key: ex.sessionStats?.key ?? 'Ctrl+Alt+K',
           autoStreak: ex.instantReplay?.enabled ? (ex.instantReplay.autoStreak || 0) : 0,
+          autoMulti: ex.instantReplay?.enabled ? (ex.instantReplay.autoMulti || 0) : 0,
+          autoMultiSeconds: ex.instantReplay?.autoMultiSeconds || 10,
           dailyKillGoal: ex.sessionStats?.dailyKillGoal ?? 0,
           breakMinutes: ex.sessionStats?.breakMinutes ?? 0,
         });

@@ -15,15 +15,31 @@ KRH Client is the official client of the [Krunker Resource Hub](https://krunker-
 
 | File | For |
 | --- | --- |
-| `KRH.Client-4.0.0-Setup.exe` | Windows 64-bit, installer |
-| `KRH.Client-4.0.0-Setup.msi` | Windows 64-bit, MSI installer (per-user or all users) |
-| `KRH.Client-4.0.0-Portable.exe` | Windows 64-bit, no installation |
-| `KRH.Client-4.0.0-linux-x64.deb` | Debian, Ubuntu, Mint |
-| `KRH.Client-4.0.0-linux-x64.AppImage` | Linux, run `chmod +x` first |
+| `KRH.Client-4.1.0-Setup.exe` | Windows 64-bit, installer |
+| `KRH.Client-4.1.0-Setup.msi` | Windows 64-bit, MSI installer (per-user or all users) |
+| `KRH.Client-4.1.0-Portable.exe` | Windows 64-bit, no installation |
+| `KRH.Client-4.1.0-linux-x64.deb` | Debian, Ubuntu, Mint |
+| `KRH.Client-4.1.0-linux-x64.AppImage` | Linux, run `chmod +x` first |
+| `KRH.Client-4.1.0-Uninstaller.exe` | Windows, removes KRH Client however it was installed and asks whether your data goes too |
+| `KRH.Client-4.1.0-linux-uninstall.sh` | Linux, removes the `.deb` or the AppImage and asks whether your data goes too |
 
 The builds are not code-signed, so Windows SmartScreen may show an "Unknown publisher" warning on first launch. Check the SHA-256 checksums on the release page before running a download.
 
 **If the MSI does not open or install:** the builds are not code-signed. On "Windows protected your PC" click **More info > Run anyway**. If the file is blocked, right-click it > **Properties** > tick **Unblock** > **OK**. Error 1603 / 1618: close other installers or restart Windows, and uninstall an older KRH Client first. To get a log, run `msiexec /i "<file>.msi" /L*v install.log` in Command Prompt and send `install.log` in an issue. The `Setup.exe` and the Portable version work without MSI.
+
+## Uninstalling
+
+Every release has an uninstaller next to the installers. It removes the program and asks about your data:
+
+- **Keep my data** (the default): settings, saved accounts, userscripts, swapper files, statistics and backups stay, so a later reinstall picks up where you left off.
+- **Delete my data**: everything in `%APPDATA%\krh-client` (Windows) or `~/.config/krh-client` (Linux), and the temporary update files.
+- **Also delete the recordings, clips and pictures** KRH Client saved in your Videos and Pictures folders, and the mods in Downloads. A separate tick on purpose: those are your own files. Folders you picked yourself (for example a backup copy folder) are never touched, and neither is anything else in Videos, Pictures or Downloads.
+
+**Windows:** run `KRH.Client-<version>-Uninstaller.exe`. It finds a copy installed with `Setup.exe` or the `.msi` (for this user or for all users: for all users start it with *Run as administrator*), closes KRH Client if it is running and asks before deleting any data. A **portable** copy has nothing to uninstall: delete its `.exe` yourself, and the uninstaller can still remove its data. The Setup.exe copy can also be removed from *Settings > Apps*; its uninstaller asks the same question. For scripts: `KRH.Client-<version>-Uninstaller.exe /S [/DELETEDATA] [/DELETEMEDIA] [/KEEPPROGRAM]` (silent; the data is kept unless `/DELETEDATA` is given; `/DELETEMEDIA` only counts together with `/DELETEDATA`).
+
+**Linux:** `bash KRH.Client-<version>-linux-uninstall.sh` (add `--dry-run` first to see what it would remove). It finds the `.deb` package and AppImages in the usual folders (give another with `--appimage FILE`). Options: `-y` (no questions: data kept unless `--delete-data`), `--delete-data`, `--delete-media`, `--keep-program`.
+
+**macOS:** drag KRH Client from Applications to the Trash. To delete the data as well, remove `~/Library/Application Support/krh-client`.
 
 **Proxy:** Settings > Performance > Proxy sends all traffic of the client through a SOCKS5 / SOCKS4 / HTTP / HTTPS proxy of your choice (optional login, password stored encrypted, restart needed). It is a proxy, not a VPN, and only affects this client.
 
@@ -142,6 +158,12 @@ The builds are not code-signed, so Windows SmartScreen may show an "Unknown publ
 - **Storage** (4.0.0): disk use of the client and cleaning of old logs, backups and replay clips
 - **Weekly summary** (4.0.0): a quiet notification on the first start of a week
 - **Play Log and Connection Journal** (4.0.0): K/D by ping range, latest rounds, and a journal of disconnects and ping spikes you can copy for your provider
+- **Performance coach, Best regions, Weekly card, Warm-up insight** (4.1.0): FPS suggestions you can test with a before/after measurement, the regions worth searching in, a shareable picture of your week and a note when you start slow or tire in long sessions
+- **Auto clip at many kills and Discord webhook** (4.1.0): clips saved by themselves at N kills within a few seconds, optionally posted to your own Discord channel
+- **Userscript updates from the KRH website** (4.1.0): newer versions of scripts you added from the website, with a diff summary, one-click update, automatic update of safe ones and an undo
+- **Weekly leaderboard** (4.1.0): optional, off by default: share one summary per week with the KRH website leaderboard
+- **Krunker-update warning, Battery profile, The minute before a disconnect, Did that change help?** (4.1.0): a banner when a Krunker update breaks scripts, power saving on battery, FPS and ping before every disconnect with a guess at who is guilty, and a careful before/after K/D check after you change crosshair or presets
+- **Setup bundles and Share ping** (4.1.0): one-click setups from the KRH website (crosshair, settings profile, legal scripts) and an optional "best region for your time zone" panel fed by shared ping averages
 - **Logs page** (4.0.0): the client log in the dashboard with filters and search
 - **Network Doctor** (4.0.0): one test that says whether the problem is your connection, your DNS, the route to a region or just distance
 - **FPS by map and class** (4.0.0): average FPS and 1% low per map and class, measured with a light counter during matches

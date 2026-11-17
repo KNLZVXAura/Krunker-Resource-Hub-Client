@@ -34,7 +34,7 @@ async function copyText(text: string): Promise<boolean> {
   } catch { return false; }
 }
 
-export async function shareCode(kind: 'profile' | 'crosshair' | 'loadout' | 'autoprofile', name: string, data: unknown): Promise<void> {
+export async function shareCode(kind: 'profile' | 'crosshair' | 'loadout' | 'autoprofile' | 'bundle', name: string, data: unknown): Promise<void> {
   const r = await ipcRenderer.invoke('share-encode', kind, name, data) as { ok: boolean; code?: string; error?: string };
   if (!r.ok || !r.code) { showToast(r.error || 'Could not make a code'); return; }
   showToast((await copyText(r.code)) ? 'Code copied. Paste it in Discord or a chat.' : 'Could not copy the code');
@@ -126,6 +126,33 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
     min: 0, max: 30, step: 1, value: ex.instantReplay.autoStreak, refreshOnly: true,
     onChange: (v) => { ex.instantReplay.autoStreak = v; save(); },
   }));
+  ir.appendChild(createNumberRow({
+    label: 'Auto Clip at Many Kills', desc: 'Also save a clip by itself when you get this many kills within the time below, even if you die in between (0 = off). Needs Track Session Stats.',
+    min: 0, max: 20, step: 1, value: ex.instantReplay.autoMulti, refreshOnly: true,
+    onChange: (v) => { ex.instantReplay.autoMulti = v; save(); },
+  }));
+  ir.appendChild(createNumberRow({
+    label: 'Many Kills: Time Window (seconds)', desc: 'For example 5 kills within 10 seconds',
+    min: 3, max: 60, step: 1, value: ex.instantReplay.autoMultiSeconds, refreshOnly: true,
+    onChange: (v) => { ex.instantReplay.autoMultiSeconds = v; save(); },
+  }));
+  ir.appendChild(createToggleRow({
+    label: 'Send Automatic Clips to Discord', desc: 'Posts clips saved by the two automatic rules above to your Discord webhook (below). A clip over 9 MB is not uploaded: a short message is posted instead.',
+    checked: ex.instantReplay.sendToDiscord, instant: true,
+    onChange: (v) => { ex.instantReplay.sendToDiscord = v; save(); },
+  }));
+  const hook = createTextRow({
+    label: 'Discord Webhook', desc: 'Channel settings > Integrations > Webhooks > Copy Webhook URL. Keep it private: anyone with it can post in that channel. It is never saved in backups or exported settings.',
+    value: ex.discordWebhook, placeholder: 'https://discord.com/api/webhooks/...', instant: true,
+    validate: (v) => (v && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,100}$/.test(v) ? 'This does not look like a Discord webhook address' : null),
+    onChange: (v) => { ex.discordWebhook = v.trim(); save(); },
+  });
+  hook.input.type = 'password';
+  ir.appendChild(hook.row);
+  ir.appendChild(createButtonRow({
+    label: 'Test the Webhook', desc: 'Posts one short test message to the channel',
+    buttons: [{ label: 'Send test', onClick: () => { void ipcRenderer.invoke('discord-test').then((r: { ok: boolean; error?: string }) => showToast(r.ok ? 'Test message sent' : (r.error || 'Could not send'))); } }],
+  }).row);
 
   // ── Session stats ──
   const ss = createGroup(body, 'Session Stats');
@@ -175,8 +202,82 @@ export function buildV11Section(body: HTMLElement, ex: ExtrasConfig, save: () =>
     buttons: [{ label: 'Open editor', onClick: () => { void openLayoutEditor(); } }],
   }).row);
 
+  buildBatteryGroup(body, ex, save);
+  buildKrhSiteGroup(body, ex, save);
   buildPacksGroup(body, ex, save);
   buildShareGroup(body, ex, save);
+}
+
+// ── Battery ──
+function buildBatteryGroup(body: HTMLElement, ex: ExtrasConfig, save: () => void): void {
+  const g = createGroup(body, 'Battery');
+  g.appendChild(createInfoRow('On a laptop running on its battery the client can lower a few things that cost power, and put them back when you plug in. It only puts back what it changed itself, and only if you did not change that setting in the meantime.'));
+  g.appendChild(createToggleRow({
+    label: 'Battery Profile', desc: 'Lower the settings below while the computer runs on battery',
+    checked: ex.batteryProfile.enabled, instant: true,
+    onChange: (v) => { ex.batteryProfile.enabled = v; save(); },
+  }));
+  g.appendChild(createNumberRow({
+    label: 'FPS Cap on Battery', desc: 'Used only when the FPS cap can be changed while the game runs (0 = leave it alone)',
+    min: 0, max: 360, step: 5, value: ex.batteryProfile.frameCap, instant: true,
+    onChange: (v) => { ex.batteryProfile.frameCap = v; save(); },
+  }));
+  g.appendChild(createToggleRow({
+    label: 'Switch Instant Replay Off on Battery', desc: 'Recording the game all the time costs power',
+    checked: ex.batteryProfile.pauseReplay, instant: true,
+    onChange: (v) => { ex.batteryProfile.pauseReplay = v; save(); },
+  }));
+  g.appendChild(createToggleRow({
+    label: 'Switch Motion Blur Off on Battery', desc: 'Motion blur redraws the picture while you turn',
+    checked: ex.batteryProfile.noMotionBlur, instant: true,
+    onChange: (v) => { ex.batteryProfile.noMotionBlur = v; save(); },
+  }));
+}
+
+// ── KRH website: script updates and the weekly leaderboard ──
+function buildKrhSiteGroup(body: HTMLElement, ex: ExtrasConfig, save: () => void): void {
+  const g = createGroup(body, 'KRH Website');
+  g.appendChild(createInfoRow('Things the KRH website and the client do together. Everything here is optional. Only the KRH website addresses the client already trusts are ever contacted.'));
+  g.appendChild(createSelectRow({
+    label: 'Userscript Updates', desc: 'For scripts you added with "Use in KRH Client" on the website: Off = never look, Ask = tell me in Dashboard > Userscripts, Automatic = update untouched scripts by itself when the new version adds no network or eval code, and take an update back if the connection drops twice soon after it. Scripts you edited are never overwritten without asking.',
+    options: [{ value: 'ask', label: 'Ask me' }, { value: 'auto', label: 'Automatic' }, { value: 'off', label: 'Off' }],
+    value: ex.scriptUpdates, instant: true,
+    onChange: (v) => { ex.scriptUpdates = v === 'auto' || v === 'off' ? v : 'ask'; save(); },
+  }));
+  g.appendChild(createButtonRow({
+    label: 'Check for Script Updates', desc: 'Looks at the website now',
+    buttons: [{ label: 'Check now', onClick: () => { void ipcRenderer.invoke('script-updates-check').then((r: { text: string }) => showToast(r.text)); } }],
+  }).row);
+  g.appendChild(createToggleRow({
+    label: 'Share Weekly Stats with KRH', desc: 'Lets the KRH website put you on the weekly leaderboard: one small summary per week (minutes, sessions, kills, deaths, days played, most played map). Needs Track Session Stats and a login on the website inside this client. You can hide yourself or delete your stats on the website at any time.',
+    checked: ex.shareWeekly, instant: true,
+    onChange: (v) => { ex.shareWeekly = v; save(); },
+  }));
+  const preview = createRowShell('What Would Be Sent', '', { block: true });
+  preview.control.style.cssText = 'display:flex;flex-direction:column;gap:6px;width:100%;';
+  const out = document.createElement('div');
+  out.style.cssText = 'font-size:12px;line-height:1.5;opacity:.85;white-space:pre-wrap;';
+  out.textContent = 'Press Preview to see the exact numbers.';
+  preview.control.appendChild(out);
+  preview.control.appendChild(makeButton({ label: 'Preview', onClick: () => {
+    void ipcRenderer.invoke('weekly-share-preview').then((r: { lines: string[] }) => { out.textContent = r.lines.length ? r.lines.join('\n') : 'Nothing yet: play a few minutes with Track Session Stats on.'; });
+  } }));
+  g.appendChild(preview.row);
+  g.appendChild(createToggleRow({
+    label: 'Share Ping with KRH', desc: 'Lets the website tell players in your time zone which region is usually best at this hour: the typical ping per region and hour of day from your Ping History, and your time zone as a whole number of hours (not where you live). No IP address and no server names. Off by default.',
+    checked: ex.sharePing, instant: true,
+    onChange: (v) => { ex.sharePing = v; save(); },
+  }));
+  const pp = createRowShell('What Would Be Sent (ping)', '', { block: true });
+  pp.control.style.cssText = 'display:flex;flex-direction:column;gap:6px;width:100%;';
+  const pout = document.createElement('div');
+  pout.style.cssText = 'font-size:12px;line-height:1.5;opacity:.85;white-space:pre-wrap;';
+  pout.textContent = 'Press Preview to see what would be sent.';
+  pp.control.appendChild(pout);
+  pp.control.appendChild(makeButton({ label: 'Preview', onClick: () => {
+    void ipcRenderer.invoke('ping-share-preview').then((r: { lines: string[] }) => { pout.textContent = r.lines.length ? r.lines.join('\n') : 'Nothing yet: open Dashboard > Servers a few times over several days so the Ping History fills.'; });
+  } }));
+  g.appendChild(pp.row);
 }
 
 // ── Resource packs ──
@@ -366,6 +467,10 @@ function buildShareGroup(body: HTMLElement, ex: ExtrasConfig, save: () => void):
       void shareCode('profile', p.name, { data: p.data });
     } }),
     makeButton({ label: 'Share crosshair', onClick: () => { void shareCode('crosshair', 'Crosshair', ex.crosshair); } }),
+    makeButton({ label: 'Share setup (bundle)', onClick: () => {
+      const p = ex.settingsProfiles.find((x) => x.name === profSel.value);
+      void shareCode('bundle', p ? p.name : 'My setup', { crosshair: ex.crosshair, profile: p ? { name: p.name, data: p.data } : null });
+    } }),
   );
   g.appendChild(share.row);
 
@@ -386,6 +491,7 @@ async function importCode(code: string, ex: ExtrasConfig, save: () => void, sync
     | { ok: false; error: string }
     | { ok: true; kind: 'profile'; name: string; data: string }
     | { ok: true; kind: 'crosshair'; name: string; data: ExtrasConfig['crosshair'] }
+    | { ok: true; kind: 'bundle'; name: string; crosshair: ExtrasConfig['crosshair'] | null; profile: { name: string; data: string } | null }
     | { ok: true; kind: 'loadout'; name: string; packs: Array<{ name: string; source: string }> }
     | { ok: true; kind: 'autoprofile'; name: string; rule: ExtrasConfig['autoProfiles']['rules'][number]; presets: ExtrasConfig['settingPresets'] };
   if (!r.ok) { showToast(r.error); return false; }
@@ -405,6 +511,19 @@ async function importCode(code: string, ex: ExtrasConfig, save: () => void, sync
     save();
     setCrosshair(ex.crosshair);
     showToast('Crosshair imported and switched on. Reopen Settings to see its values.');
+    return true;
+  }
+  if (r.kind === 'bundle') {
+    // The same two parts as the single codes: the crosshair replaces yours, the profile is added to your Settings Profiles
+    if (r.crosshair) { ex.crosshair = { ...ex.crosshair, ...r.crosshair, enabled: true }; setCrosshair(ex.crosshair); }
+    let added = '';
+    if (r.profile && ex.settingsProfiles.length < 30) {
+      const taken = new Set(ex.settingsProfiles.map((p) => p.name));
+      let name = r.profile.name; for (let n = 2; taken.has(name); n++) name = `${r.profile.name.slice(0, 52)} (${n})`;
+      ex.settingsProfiles.push({ name, data: r.profile.data }); added = name; syncProf();
+    }
+    save();
+    showToast(`Setup imported${r.crosshair ? ': crosshair switched on' : ''}${added ? `, profile "${added}" added (load it under Settings Profiles)` : ''}. Reopen Settings to see the values.`);
     return true;
   }
   if (r.kind === 'autoprofile') {

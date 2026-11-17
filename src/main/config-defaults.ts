@@ -153,7 +153,23 @@ export interface ExtrasConfig {
     key: string;
     /** Also save a clip by itself at this kill streak (0 = off). */
     autoStreak: number;
+    /** Also save a clip by itself at this many kills within autoMultiSeconds (0 = off). */
+    autoMulti: number;
+    /** The time window for autoMulti (3 - 60 seconds). */
+    autoMultiSeconds: number;
+    /** Post a saved clip (when it is small enough) or a short message to the Discord webhook below. */
+    sendToDiscord: boolean;
   };
+  /** A Discord webhook address (https://discord.com/api/webhooks/...) for clips and the weekly card. Empty = nothing is sent. */
+  discordWebhook: string;
+  /** Userscripts added from the KRH website: look for newer versions (off), tell me (ask) or update safe ones by itself (auto). */
+  scriptUpdates: 'off' | 'ask' | 'auto';
+  /** Share one summary per week (minutes, sessions, kills, deaths, days played, most played map) with the KRH website leaderboard. */
+  shareWeekly: boolean;
+  /** Share the typical ping per region and hour of day (and the time zone) with the KRH website. */
+  sharePing: boolean;
+  /** Lower a few settings while the computer runs on battery (see shared/battery.ts). */
+  batteryProfile: { enabled: boolean; frameCap: number; pauseReplay: boolean; noMotionBlur: boolean };
   /** Session stats: kills, deaths, play time and maps, kept on this computer. */
   sessionStats: {
     enabled: boolean;
@@ -563,7 +579,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     updateInstallOnQuit: false,
     streamerMode: false,
     streamerKey: 'Ctrl+Alt+M',
-    instantReplay: { enabled: false, seconds: 30, key: 'Ctrl+Alt+R', autoStreak: 0 },
+    instantReplay: { enabled: false, seconds: 30, key: 'Ctrl+Alt+R', autoStreak: 0, autoMulti: 0, autoMultiSeconds: 10, sendToDiscord: false },
+    discordWebhook: '',
+    scriptUpdates: 'ask',
+    shareWeekly: false,
+    sharePing: false,
+    batteryProfile: { enabled: false, frameCap: 60, pauseReplay: true, noMotionBlur: true },
     sessionStats: { enabled: true, summary: true, key: 'Ctrl+Alt+K', dailyKillGoal: 0, breakMinutes: 0 },
     packs: { enabled: [], loadouts: [] },
     layoutEditorKey: 'Ctrl+Alt+L',

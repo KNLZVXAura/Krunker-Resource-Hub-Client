@@ -2580,7 +2580,7 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
   let cjReport = '';
   const renderJournal = async (): Promise<void> => {
     cjHolder.textContent = '';
-    let res: { graph: Array<{ day: string; drops: number; spikes: number; losses: number }>; events: Array<{ at: number; kind: string; text: string }>; report: string } | null;
+    let res: { graph: Array<{ day: string; drops: number; spikes: number; losses: number }>; events: Array<{ at: number; kind: string; text: string; trail?: string; hint?: string }>; report: string } | null;
     try { res = await ipcRenderer.invoke('journal-get'); } catch { res = null; }
     if (!res) { cjHolder.appendChild(createInfoRow('Could not read the journal.')); return; }
     cjReport = res.report;
@@ -2595,7 +2595,8 @@ export function buildExtrasSection(body: HTMLElement, exConf: any): void {
       cjHolder.appendChild(createInfoRow('<b>Latest events</b>'));
       for (const e of res.events) {
         const when = new Date(e.at);
-        cjHolder.appendChild(createInfoRow(escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + ' · ' + escapeHtml(e.text)));
+        const more = (e.trail ? '<br><span class="krh-us-meta">' + escapeHtml(e.trail) + '</span>' : '') + (e.hint ? '<br><span class="krh-us-meta">' + escapeHtml(e.hint) + '</span>' : '');
+        cjHolder.appendChild(createInfoRow(escapeHtml(when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + ' · ' + escapeHtml(e.text) + more));
       }
     } else cjHolder.appendChild(createInfoRow('No event yet. Play with the Play Log switched on and anything that goes wrong shows up here.'));
   };

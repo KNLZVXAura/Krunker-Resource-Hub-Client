@@ -13,12 +13,16 @@ import { matchCombo, typingInField } from './hotkey';
 import { showToast } from './utils';
 import { savedConsole as _console } from './saved-console';
 import { breakDue } from '../shared/stats-compare';
+import { killsInWindow, shouldAutoClip } from '../shared/clips';
 
 export interface TrackerOptions {
   enabled: boolean;
   key: string;
   /** Save an instant replay clip at this kill streak (0 = off). */
   autoStreak: number;
+  /** Save an instant replay clip at this many kills within autoMultiSeconds (0 = off). */
+  autoMulti: number;
+  autoMultiSeconds: number;
   /** Kills per day to aim for (0 = off). */
   dailyKillGoal: number;
   /** Minutes of play after which a break is suggested (0 = off). */
@@ -33,7 +37,9 @@ const FLUSH_MS = 20_000;
 const TICK_MS = 1000;
 
 let started = false;
-let opts: TrackerOptions = { enabled: true, key: 'Ctrl+Alt+K', autoStreak: 0, dailyKillGoal: 0, breakMinutes: 0 };
+let opts: TrackerOptions = { enabled: true, key: 'Ctrl+Alt+K', autoStreak: 0, autoMulti: 0, autoMultiSeconds: 10, dailyKillGoal: 0, breakMinutes: 0 };
+let killTimes: number[] = [];
+let lastAutoClipAt = 0;
 let delta: Delta = fresh();
 let streak = 0;
 let wasDead = false;
@@ -155,10 +161,21 @@ function onKill(): void {
   tally('k');
   streak++;
   if (streak > delta.bestStreak) delta.bestStreak = streak;
-  if (opts.autoStreak > 0 && streak === opts.autoStreak) {
+  const now = Date.now();
+  if (opts.autoStreak > 0 && streak === opts.autoStreak && now - lastAutoClipAt > 5000) {
     // a moment later, so the clip also shows the end of the streak
     const reached = streak;
-    setTimeout(() => { void ipcRenderer.invoke('replay-save', clipContext(reached)); }, 2500);
+    lastAutoClipAt = now;
+    setTimeout(() => { void ipcRenderer.invoke('replay-save', clipContext(reached), { kind: 'streak', count: reached, seconds: 0 }); }, 2500);
+  }
+  if (opts.autoMulti > 0) {
+    killTimes = killsInWindow(killTimes, now, opts.autoMultiSeconds);
+    if (shouldAutoClip(killTimes.length, opts.autoMulti, now, lastAutoClipAt, opts.autoMultiSeconds)) {
+      const count = killTimes.length;
+      lastAutoClipAt = now;
+      killTimes = [];
+      setTimeout(() => { void ipcRenderer.invoke('replay-save', clipContext(count), { kind: 'multi', count, seconds: opts.autoMultiSeconds }); }, 2500);
+    }
   }
 }
 

@@ -34,7 +34,9 @@ const ms = (n: number): string => Math.round(n) + ' ms';
 export function diagnose(input: DoctorInput): DoctorResult {
   const findings: DoctorFinding[] = [];
   const baseAll = input.base.flatMap((b) => b.samples);
-  const baseStats = sampleStats(baseAll);
+  // Jitter is the change from one answer to the next of the SAME host: joining the lists would count the step from one host to the other
+  const perHost = input.base.map((b) => sampleStats(b.samples));
+  const baseStats: SampleStats = { ...sampleStats(baseAll), jitter: perHost.length ? perHost.reduce((a, s) => a + s.jitter, 0) / perHost.length : 0 };
   const baseAlive = baseAll.some((s) => s >= 0);
 
   if (!baseAlive) {

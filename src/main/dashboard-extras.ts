@@ -3,11 +3,25 @@
 // Profiles, Diagnostics, Updates / What's new, a keybind overview and the automatic cache limit. Every handler is a
 // `dash:*` channel like the rest of the dashboard, and every value from the page is validated again here.
 
-import { ipcMain } from 'electron';
+import { app, clipboard, ipcMain, nativeImage, shell } from 'electron';
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, join as joinPath } from 'path';
-import { getStats, kd, fmtDuration, summaryText, topMap } from './session-stats';
+import { allSessions, getStats, kd, fmtDuration, summaryText, topMap } from './session-stats';
 import { renderMarkdown } from '../shared/markdown';
+import { pickBest } from '../shared/region-pick';
+import { getPingHistory } from './ping-history';
+import { applyScriptUpdate, checkScriptUpdates, scriptUpdatesView, skipScriptUpdate, undoScriptUpdate } from './script-updates';
+import type { ScriptIO } from './script-updates';
+import { coachApply, coachKeep, coachUndo, coachView } from './perf-coach';
+import { phasesView } from './play-log';
+import { postToDiscord } from './discord-webhook';
+import { buildCard } from '../shared/weekly-card';
+import type { CardSession } from '../shared/weekly-card';
+import { warmupInsight } from '../shared/warmup';
+import type { UpdateMode } from '../shared/script-updates';
+import type { ScriptHealth } from '../shared/script-health';
+import { dismissBanner, watchView } from './game-watch';
+import { recentImpacts } from '../shared/impact';
 import { redact } from '../shared/redact';
 import { filterId, filterLog, isLogFileName, LOG_FILTERS } from '../shared/log-filter';
 import { electronLog, getLogPath } from './logger';
@@ -50,6 +64,18 @@ export interface ExtraDeps {
   keybinds: () => Record<string, { key: string; ctrl: boolean; shift: boolean; alt: boolean }>;
   cacheSizeBytes: () => Promise<number>;
   clearCache: () => Promise<void>;
+  /** FPS statistics switched on (the performance coach needs the measurements). */
+  fpsStatsOn: () => boolean;
+  /** Userscripts that failed in this start. */
+  failingScripts: () => ScriptHealth[];
+  /** The settings changes that were saved (newest last), for "did that help?". */
+  settingsChanges: () => Array<{ at: number; key: string; fields: string[] }>;
+  scriptUpdateMode: () => UpdateMode;
+  setScriptUpdateMode: (mode: UpdateMode) => void;
+  scriptIO: () => ScriptIO;
+  /** Reloads the game page when it is open (a changed userscript runs after that). */
+  reloadGame: () => void;
+  discordWebhook: () => string;
 }
 
 interface FavoriteGame { name: string; url: string }
@@ -248,7 +274,19 @@ export function registerExtras(deps: ExtraDeps): void {
     const rows = Object.entries(pings).map(([code, ms]) => ({ code, id: REGION_IDS[code] ?? '', ms, fav: favs.includes(code) }));
     rows.sort((a, b) => Number(b.fav) - Number(a.fav) || a.ms - b.ms);
     const inMatchmaker = deps.getMatchmakerRegions();
-    return { rows, matchmakerRegions: inMatchmaker };
+    const pick = pickBest(pings, getPingHistory(), new Date().getHours());
+    return { rows, matchmakerRegions: inMatchmaker, best: { codes: pick.codes, text: pick.text, usual: pick.rows.map((r) => ({ code: r.code, usual: r.usual })) } };
+  });
+  // The regions the picker suggests, taken straight into the matchmaker (also starred, so the list shows them)
+  h('dash:server-use-best', async () => {
+    const pick = pickBest(await deps.getPings(false), getPingHistory(), new Date().getHours());
+    const ids = pick.codes.map((c) => REGION_IDS[c]).filter(Boolean);
+    if (!ids.length) return { regions: [] as string[], codes: [] as string[] };
+    const d = load();
+    d.favRegions = pick.codes.slice();
+    save();
+    deps.setMatchmakerRegions(ids);
+    return { regions: ids, codes: pick.codes };
   });
   h('dash:server-fav', (_e, code: unknown) => {
     if (typeof code !== 'string' || !(code in REGION_IDS)) return false;
@@ -302,6 +340,81 @@ export function registerExtras(deps: ExtraDeps): void {
       recent: s.recent.map(row),
       total: { ...s.total, kd: kd(s.total), duration: fmtDuration(s.total.seconds) },
     };
+  });
+
+  // ── Performance coach ──
+  h('dash:coach', () => coachView(deps.fpsStatsOn()));
+  h('dash:coach-apply', (_e, id: unknown) => { const error = coachApply(id); return error ? { error } : { ok: true }; });
+  h('dash:coach-keep', () => coachKeep());
+  h('dash:coach-undo', () => coachUndo());
+
+  // ── Userscript updates from the KRH website ──
+  h('dash:script-updates', () => ({ mode: deps.scriptUpdateMode(), ...scriptUpdatesView() }));
+  h('dash:script-updates-mode', (_e, mode: unknown) => {
+    if (mode !== 'off' && mode !== 'ask' && mode !== 'auto') return false;
+    deps.setScriptUpdateMode(mode);
+    return true;
+  });
+  h('dash:script-updates-check', async () => {
+    const mode = deps.scriptUpdateMode();
+    if (mode === 'off') return { off: true, text: 'Script updates are off (Client Settings > Extras > KRH Website).' };
+    const s = await checkScriptUpdates(mode, deps.scriptIO());
+    if (s.applied) deps.reloadGame();
+    const text = s.checked === 0 && s.failed === 0 ? 'No scripts from the KRH website to check yet.'
+      : `Checked ${s.checked}: ${s.applied ? s.applied + ' updated, ' : ''}${s.updates ? s.updates + ' waiting for you' : 'nothing else new'}${s.failed ? `, ${s.failed} could not be checked` : ''}.`;
+    return { text };
+  });
+  h('dash:script-update-apply', async (_e, file: unknown) => { const error = await applyScriptUpdate(file, deps.scriptIO()); if (!error) deps.reloadGame(); return error ? { error } : { ok: true }; });
+  h('dash:script-update-skip', (_e, file: unknown) => skipScriptUpdate(file));
+  h('dash:script-update-undo', (_e, file: unknown) => { const error = undoScriptUpdate(file, deps.scriptIO()); if (!error) deps.reloadGame(); return error ? { error } : { ok: true }; });
+
+  // ── Krunker updated: scripts that stopped working ──
+  h('dash:gamewatch', () => {
+    const failing = deps.failingScripts();
+    const v = watchView(failing.map((f) => f.filename));
+    if (!v.banner) return { banner: null };
+    const by = new Map(failing.map((f) => [f.filename, f]));
+    return { banner: { changedAt: v.banner.changedAt, scripts: v.banner.scripts.map((fn) => ({ filename: fn, name: by.get(fn)?.name ?? fn, detail: (by.get(fn)?.detail ?? '').slice(0, 160) })) } };
+  });
+  h('dash:gamewatch-dismiss', () => dismissBanner());
+
+  // ── Did that change help? ──
+  h('dash:impact', () => recentImpacts(allSessions(), deps.settingsChanges(), Date.now()).map((x) => ({ at: x.at, label: x.label, verdict: x.verdict, text: x.text })));
+
+  // ── Warm-up insight and the weekly card ──
+  h('dash:insight', () => warmupInsight(phasesView()));
+  h('dash:weekly-card', (_e, which: unknown) => ({ card: buildCard(allSessions() as CardSession[], Date.now(), which === 'last' ? 'last' : 'this') }));
+  const cardPng = (raw: unknown): Buffer | null => {
+    if (typeof raw !== 'string' || !raw.startsWith('data:image/png;base64,') || raw.length > 4_000_000) return null;
+    const buf = Buffer.from(raw.slice(22), 'base64');
+    return buf.length > 100 && buf.subarray(1, 4).toString('latin1') === 'PNG' ? buf : null;
+  };
+  h('dash:weekly-card-save', (_e, raw: unknown) => {
+    const png = cardPng(raw);
+    if (!png) return { error: 'The picture was not valid.' };
+    try {
+      const dir = joinPath(app.getPath('pictures'), 'KRH Client');
+      mkdirSync(dir, { recursive: true });
+      const file = joinPath(dir, `KRH-week-${new Date().toISOString().slice(0, 10)}.png`);
+      writeFileSync(file, png);
+      shell.showItemInFolder(file);
+      return { ok: true, file };
+    } catch (err) { return { error: 'Could not save: ' + (err as Error).message }; }
+  });
+  h('dash:weekly-card-copy', (_e, raw: unknown) => {
+    const png = cardPng(raw);
+    if (!png) return { error: 'The picture was not valid.' };
+    const img = nativeImage.createFromBuffer(png);
+    if (img.isEmpty()) return { error: 'The picture was not valid.' };
+    clipboard.writeImage(img);
+    return { ok: true };
+  });
+  h('dash:weekly-card-discord', async (_e, raw: unknown, text: unknown) => {
+    const png = cardPng(raw);
+    if (!png) return { error: 'The picture was not valid.' };
+    const msg = typeof text === 'string' ? text.slice(0, 200) : 'My week in Krunker';
+    const r = await postToDiscord(deps.discordWebhook(), msg, { name: 'krh-week.png', data: png, mime: 'image/png' });
+    return r.ok ? { ok: true } : { error: r.error || 'Could not send.' };
   });
 
   // ── Game profiles (the Krunker settings snapshots from Settings > General > Settings Profiles) ──

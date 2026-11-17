@@ -74,10 +74,18 @@ jobs:
       - name: Build Linux distributables
         run: npx electron-builder --linux -c.electronDist=node_modules/electron/dist-linux --publish never
 
+      # The uninstallers: a Windows .exe (NSIS compiles it fine on Linux, a plain apt package, a few MB) and a Linux script.
+      # They ship next to the installers in every release (build/uninstaller/).
+      - name: Build the uninstallers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nsis
+          node scripts/build-uninstaller.mjs
+
       - name: Report build sizes
         run: |
           echo "=== Build output sizes ==="
-          ls -lh out/*.AppImage out/*.deb 2>/dev/null || true
+          ls -lh out/*.AppImage out/*.deb out/*-Uninstaller.exe out/*-linux-uninstall.sh 2>/dev/null || true
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v7
@@ -86,6 +94,8 @@ jobs:
           path: |
             out/*.AppImage
             out/*.deb
+            out/*-Uninstaller.exe
+            out/*-linux-uninstall.sh
           if-no-files-found: error
 
   # Job id stays "build-msi" so the release job's `needs` list keeps working.
@@ -264,6 +274,7 @@ jobs:
             out/*.msi
             out/*.AppImage
             out/*.deb
+            out/*-linux-uninstall.sh
             out/*.dmg
             out/*-Portable.zip
             out/lite/*.asar
@@ -303,7 +314,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ASSETS=()
-          for file in out/*.exe out/*.msi out/*.AppImage out/*.deb out/*.dmg out/*-Portable.zip out/lite/lite.json out/lite/*.asar; do
+          for file in out/*.exe out/*.msi out/*.AppImage out/*.deb out/*-linux-uninstall.sh out/*.dmg out/*-Portable.zip out/lite/lite.json out/lite/*.asar; do
             [ -f "$file" ] || continue
             ASSETS+=("$file")
           done

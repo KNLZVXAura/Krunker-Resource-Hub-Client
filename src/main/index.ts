@@ -47,8 +47,18 @@ import type { FileInfo, StorageEntry } from '../shared/storage';
 import { flushTrends, initTrends, takeNewFindings, trendsView } from './trends';
 import { buildReady } from '../shared/ready-check';
 import { changeLine } from '../shared/script-changes';
-import { changeLog, checkScripts, clearChangeLog } from './script-changes';
-import { cleanClipContext, sizeText as clipSizeText, autoTitle } from '../shared/clips';
+import { acceptScript, changeLog, checkScripts, clearChangeLog } from './script-changes';
+import { cleanAutoClip, cleanClipContext, clipMessage, sizeText as clipSizeText, autoTitle } from '../shared/clips';
+import { buildShare, shareLine } from '../shared/weekly-share';
+import { beginGameLoad, noteGameResource, rememberFailing, shouldToast } from './game-watch';
+import { initBattery } from './battery';
+import { buildPingShare, previewLines } from '../shared/community-ping';
+import type { ShareSession } from '../shared/weekly-share';
+import { flushPerfCoach, initPerfCoach, notePerfWindow } from './perf-coach';
+import { getAt, setAt } from '../shared/perf-coach';
+import { noteDropForScripts, noteScriptOrigin, checkScriptUpdates } from './script-updates';
+import type { ScriptIO } from './script-updates';
+import { MAX_UPLOAD, postToDiscord } from './discord-webhook';
 import { clipPath, deleteClip, listClips, renameClip } from './clips';
 import type { CloseEvent as ConnDrop } from '../shared/conn-watch';
 import type { HuntBackend } from './script-hunt';
@@ -66,6 +76,8 @@ import { takeScreenshot, takeAreaScreenshot, openScreenshotsFolder, revealLastSc
 import { recordingsDir, toggleRecording, togglePauseRecording, stopRecording, openRecordingsFolder, startReplayBuffer, stopReplayBuffer, saveReplayClip, setReplaySeconds, replayActive } from './recorder';
 import { installPackFromUrl, installPackFromFile, listPacks, deletePack, PACK_ID_RE } from './packs';
 import { encodeShare, decodeShare } from './share-code';
+import type { ShareKind } from './share-code';
+import { cleanBundle, describeBundle, freeName } from '../shared/bundle';
 import { addDelta, allSessions, endSession, flushStats, getStats, clearStats, setSessionTag, summaryText } from './session-stats';
 import { sessionsToCsv } from '../shared/stats-csv';
 import { compareText } from '../shared/stats-compare';
@@ -595,6 +607,14 @@ const EXPORT_CONFIG_KEYS = [
   'keybinds', 'userscripts', 'ui', 'discord', 'translator', 'advanced', 'extras',
 ] as const;
 
+/** The settings that are secrets (the Discord webhook address) never go into a backup, an export or a file that gets shared. */
+function withoutSecrets(client: Record<string, unknown>): void {
+  if (client.extras && typeof client.extras === 'object') {
+    client.extras = { ...(client.extras as Record<string, unknown>) };
+    delete (client.extras as Record<string, unknown>).discordWebhook;
+  }
+}
+
 /** Automatic backup right before an update is installed (see pre-update.ts). Works without the game running. */
 function runAutoBackup(kind: AutoBackupKind = 'pre-update', force = false): void {
   if (safeMode) return;
@@ -609,6 +629,7 @@ function runAutoBackup(kind: AutoBackupKind = 'pre-update', force = false): void
   client.ui = { ...(client.ui as Record<string, unknown>) };
   delete (client.ui as Record<string, unknown>).lastSeenVersion;
   delete (client.ui as Record<string, unknown>).skippedUpdateVersion;
+  withoutSecrets(client);
   const written = writeAutoBackup({
     dirs: { scripts: join(us.path || kh, 'scripts'), css: join(kh, 'user-css'), builtin: join(kh, 'builtin-scripts'), data: kh },
     readClient: () => client,
@@ -852,6 +873,23 @@ async function launchApp(): Promise<void> {
   // Any number of user .css files, each with its own on/off switch (Dashboard > Custom CSS)
   const userCss = new UserCssManager(join(app.getPath('userData'), 'KRH Client', 'user-css'));
   electronLog.log(`[KRH] Userscripts: ${userscriptManager ? 'enabled' : 'disabled'} (${usDir})`);
+  // Reading and writing userscript files for the update check (the client wrote them itself, so the change detector is told)
+  function scriptIO(): ScriptIO {
+    const dir = join(usDir, 'scripts');
+    const ok = (f: string): boolean => /^[^\\/:*?"<>|]+\.js$/.test(f) && !f.includes('..');
+    return {
+      read: (file) => { try { return ok(file) ? readFileSync(join(dir, file), 'utf-8') : null; } catch { return null; } },
+      write: (file, code) => {
+        try {
+          if (!ok(file)) return false;
+          writeFileSync(join(dir, file), code, 'utf-8');
+          acceptScript(file, code);
+          return true;
+        } catch { return false; }
+      },
+    };
+  }
+  const reloadGameIfLive = (): void => { if (gameActive && !win.isDestroyed()) win.webContents.reload(); };
 
   // ── Ad blocking + resource swapper (single onBeforeRequest — Electron only allows one) ──
   // The broad *://*.krunker.io/* pattern lets the swapper intercept any krunker asset.
@@ -925,6 +963,11 @@ async function launchApp(): Promise<void> {
       const u = new URL(details.url);
       electronLog.warn(`[KRH-Net] ${details.resourceType} ${u.hostname} failed: ${details.error}`);
     } catch { /* invalid URL — ignore */ }
+  });
+
+  // The game's own script files (address + ETag) tell when Krunker itself was updated (see game-watch.ts)
+  ses.webRequest.onCompleted({ urls: ['*://krunker.io/*', '*://*.krunker.io/*'] }, (details) => {
+    if (details.resourceType === 'script') noteGameResource(details.url, details.resourceType, details.responseHeaders);
   });
 
   if (swapper) {
@@ -1112,6 +1155,7 @@ async function launchApp(): Promise<void> {
     if (!gameActive) {
       gameActive = true;
       scriptHealth.clear();
+      beginGameLoad();
       if (scriptGuard) {
         void scriptGuard.beginSession();
         if (healthyTimer) clearTimeout(healthyTimer);
@@ -1414,6 +1458,14 @@ async function launchApp(): Promise<void> {
         keybinds: () => getKeybinds(),
         cacheSizeBytes: () => ses.getCacheSize(),
         clearCache: async () => { await ses.clearCache(); },
+        fpsStatsOn: () => getExtras().fpsStats.enabled,
+        settingsChanges: () => settingsHistory().map((e) => ({ at: e.at, key: e.key, fields: e.fields })),
+        failingScripts: () => [...scriptHealth.values()].filter((h) => h.status === 'error'),
+        scriptUpdateMode: () => getExtras().scriptUpdates,
+        setScriptUpdateMode: (mode) => { config.set('extras', sanitizeExtras({ ...getExtras(), scriptUpdates: mode })); },
+        scriptIO,
+        reloadGame: reloadGameIfLive,
+        discordWebhook: () => getExtras().discordWebhook,
       },
     });
   };
@@ -1846,6 +1898,7 @@ async function launchApp(): Promise<void> {
     out.ui = { ...(out.ui as Record<string, unknown>) };
     delete (out.ui as Record<string, unknown>).lastSeenVersion;
     delete (out.ui as Record<string, unknown>).skippedUpdateVersion;
+    withoutSecrets(out);
     return out;
   }
 
@@ -1919,6 +1972,7 @@ async function launchApp(): Promise<void> {
     const mb = (v.motionBlur && typeof v.motionBlur === 'object' ? v.motionBlur : d.motionBlur) as Partial<ExtrasConfig['motionBlur']>;
     const obj = (x: unknown): Record<string, unknown> => (x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : {});
     const numIn = (x: unknown, def: number, lo: number, hi: number): number => (typeof x === 'number' && isFinite(x) ? Math.min(hi, Math.max(lo, Math.round(x))) : def);
+    const webhook = (x: unknown): string => (typeof x === 'string' && /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,100}$/.test(x.trim()) ? x.trim() : '');
     const rr = obj(v.rpcRich) as Partial<ExtrasConfig['rpcRich']>;
     const ir = obj(v.instantReplay) as Partial<ExtrasConfig['instantReplay']>;
     const ss = obj(v.sessionStats) as Partial<ExtrasConfig['sessionStats']>;
@@ -1996,12 +2050,23 @@ async function launchApp(): Promise<void> {
       updateMode: v.updateMode === 'background' ? 'background' : 'ask',
       updateInstallOnQuit: bool(v.updateInstallOnQuit, d.updateInstallOnQuit),
       streamerMode: bool(v.streamerMode, d.streamerMode),
+      discordWebhook: webhook(v.discordWebhook),
+      scriptUpdates: v.scriptUpdates === 'off' || v.scriptUpdates === 'auto' || v.scriptUpdates === 'ask' ? v.scriptUpdates : d.scriptUpdates,
+      shareWeekly: bool(v.shareWeekly, d.shareWeekly),
+      sharePing: bool(v.sharePing, d.sharePing),
+      batteryProfile: (() => {
+        const b = obj(v.batteryProfile) as Partial<ExtrasConfig['batteryProfile']>;
+        return { enabled: bool(b.enabled, d.batteryProfile.enabled), frameCap: numIn(b.frameCap, d.batteryProfile.frameCap, 0, 360), pauseReplay: bool(b.pauseReplay, d.batteryProfile.pauseReplay), noMotionBlur: bool(b.noMotionBlur, d.batteryProfile.noMotionBlur) };
+      })(),
       streamerKey: str(v.streamerKey, d.streamerKey, 30),
       instantReplay: {
         enabled: bool(ir.enabled, d.instantReplay.enabled),
         seconds: numIn(ir.seconds, d.instantReplay.seconds, 10, 120),
         key: str(ir.key, d.instantReplay.key, 30),
         autoStreak: numIn(ir.autoStreak, d.instantReplay.autoStreak, 0, 100),
+        autoMulti: numIn(ir.autoMulti, d.instantReplay.autoMulti, 0, 20),
+        autoMultiSeconds: numIn(ir.autoMultiSeconds, d.instantReplay.autoMultiSeconds, 3, 60),
+        sendToDiscord: bool(ir.sendToDiscord, d.instantReplay.sendToDiscord),
       },
       sessionStats: {
         enabled: bool(ss.enabled, d.sessionStats.enabled),
@@ -2587,10 +2652,79 @@ async function launchApp(): Promise<void> {
   ipcMain.on('fps-sample', (e, s: { map?: unknown; cls?: unknown; fps?: unknown; low?: unknown } | null) => {
     if (e.sender !== win.webContents || !s || typeof s !== 'object' || !getExtras().fpsStats.enabled) return;
     recordFpsSample(s.map, s.cls, s.fps, s.low);
-    if (typeof s.fps === 'number') recordFpsForRound(s.fps);
+    if (typeof s.fps === 'number') {
+      recordFpsForRound(s.fps);
+      if (s.fps >= 1 && s.fps <= 1000) notePerfWindow(typeof s.map === 'string' ? s.map.slice(0, 40) : '', s.fps, typeof s.low === 'number' && s.low > 0 ? s.low : s.fps);
+    }
   });
   ipcMain.handle('fps-stats-get', () => getFpsStats());
   ipcMain.handle('fps-stats-reset', () => { resetFpsStats(); return true; });
+  // Settings > Extras > KRH Website and Instant Replay (the game window's settings pages)
+  ipcMain.handle('discord-test', async (e) => {
+    if (e.sender !== win.webContents) return { ok: false, error: 'Not allowed' };
+    return postToDiscord(getExtras().discordWebhook, 'KRH Client: the webhook works.');
+  });
+  ipcMain.handle('ping-share-preview', (e) => {
+    if (e.sender !== win.webContents) return { lines: [] as string[] };
+    return { lines: previewLines(buildPingShare(getPingHistory(), new Date().getTimezoneOffset())) };
+  });
+  ipcMain.handle('weekly-share-preview', (e) => {
+    if (e.sender !== win.webContents) return { lines: [] as string[] };
+    return { lines: buildShare(allSessions() as ShareSession[], Date.now()).map(shareLine) };
+  });
+  ipcMain.handle('script-updates-check', async (e) => {
+    if (e.sender !== win.webContents) return { text: 'Not allowed' };
+    const mode = getExtras().scriptUpdates;
+    if (mode === 'off') return { text: 'Script updates are off: pick Ask or Automatic first.' };
+    const s = await checkScriptUpdates(mode, scriptIO());
+    if (s.applied) reloadGameIfLive();
+    return { text: s.checked === 0 && s.failed === 0 ? 'No scripts from the KRH website to check yet.' : `Checked ${s.checked}: ${s.applied ? s.applied + ' updated, ' : ''}${s.updates ? s.updates + ' waiting in Dashboard > Userscripts' : 'nothing else new'}${s.failed ? `, ${s.failed} could not be checked` : ''}.` };
+  });
+  // Looks for newer versions of the website's scripts a little after start and then every six hours
+  const scriptUpdateTick = async (): Promise<void> => {
+    const mode = getExtras().scriptUpdates;
+    if (mode === 'off' || safeMode) return;
+    try {
+      const s = await checkScriptUpdates(mode, scriptIO());
+      if (s.applied) { reloadGameIfLive(); if (!win.isDestroyed()) win.webContents.send('krh-toast', `${s.applied} userscript${s.applied === 1 ? ' was' : 's were'} updated from the KRH website.`); }
+      else if (s.updates && !win.isDestroyed()) win.webContents.send('krh-toast', `${s.updates} script update${s.updates === 1 ? ' is' : 's are'} waiting: Dashboard > Userscripts.`);
+    } catch (err) { electronLog.warn('[KRH-ScriptUpdates] Check failed:', (err as Error).message); }
+  };
+  setTimeout(() => { void scriptUpdateTick(); }, 90_000).unref();
+  setInterval(() => { void scriptUpdateTick(); }, 6 * 3600_000).unref();
+  // Battery profile: lower a few things on battery, put them back on the charger (same write path as the coach)
+  initBattery({
+    profile: () => getExtras().batteryProfile,
+    read: () => ({ performance: { frameCap: config.get('performance')?.frameCap }, extras: { instantReplay: getExtras().instantReplay, motionBlur: getExtras().motionBlur } }),
+    write: (change, value) => {
+      const before = currentConfigValue(change.cat);
+      const next = setAt(before as Record<string, unknown>, change.path, value);
+      if (getAt(next, change.path) !== value) return;
+      applySetConfig(change.cat, next);
+      noteSettingsChange(change.cat, before, currentConfigValue(change.cat));
+    },
+    capLive: () => capLiveAvailable,
+    say: (text) => { if (!win.isDestroyed()) win.webContents.send('krh-toast', text); },
+  });
+  // Performance coach: the settings it may change (all take effect at once) and how it changes them (same path as the settings pages)
+  initPerfCoach({
+    read: () => {
+      const perf = { ...DEFAULT_CONFIG.performance, ...config.get('performance') };
+      const ex = getExtras();
+      return {
+        performance: { fpsUnlocked: perf.fpsUnlocked, frameCap: perf.frameCap, cpuThrottle: perf.cpuThrottle },
+        extras: { motionBlur: ex.motionBlur, instantReplay: ex.instantReplay, disableVideoSkins: ex.disableVideoSkins },
+        hz: screen.getPrimaryDisplay().displayFrequency || 0,
+      };
+    },
+    write: (change, value) => {
+      const before = currentConfigValue(change.cat);
+      const next = setAt(before as Record<string, unknown>, change.path, value);
+      if (getAt(next, change.path) !== value) return;
+      applySetConfig(change.cat, next);
+      noteSettingsChange(change.cat, before, currentConfigValue(change.cat));
+    },
+  });
   // Performance changes: this week against last week (FPS per map, ping per region), with what changed lately for context
   initTrends(appVersion);
   ipcMain.handle('perf-trends-get', () => {
@@ -2895,7 +3029,7 @@ async function launchApp(): Promise<void> {
 
   // ── Share codes (profiles, crosshair, pack loadouts) ──
   ipcMain.handle('share-encode', (_e, kind: unknown, name: unknown, data: unknown) => {
-    try { return { ok: true, code: encodeShare(kind as 'profile' | 'crosshair' | 'loadout' | 'autoprofile', String(name || ''), data) }; }
+    try { return { ok: true, code: encodeShare(kind as ShareKind, String(name || ''), data) }; }
     catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('share-decode', (_e, code: unknown) => {
@@ -2907,6 +3041,11 @@ async function launchApp(): Promise<void> {
       return { ok: true, kind: 'profile', name: r.name || 'Shared profile', data: d.data };
     }
     if (r.kind === 'crosshair') return { ok: true, kind: 'crosshair', name: r.name, data: sanitizeCrosshair(r.data) };
+    if (r.kind === 'bundle') {
+      const b = cleanBundle(r.data);
+      if (!b) return { ok: false, error: 'This bundle has nothing usable in it' };
+      return { ok: true, kind: 'bundle', name: r.name || 'Shared setup', crosshair: b.crosshair ? sanitizeCrosshair(b.crosshair) : null, profile: b.profile };
+    }
     if (r.kind === 'autoprofile') {
       const d = r.data as { rule?: unknown; presets?: unknown } | null;
       const rule = normaliseAutoProfiles({ rules: d && typeof d === 'object' ? [d.rule] : [] }, (c) => sanitizeCrosshair(c)).rules[0];
@@ -3000,7 +3139,39 @@ async function launchApp(): Promise<void> {
     hub: () => (hub.isDestroyed() ? null : hub),
     userCss,
     applyUserCss,
-    installScript: async (title, code) => {
+    pingStats: () => {
+      if (!getExtras().sharePing || safeMode) return { enabled: false, tz: 0, rows: [] };
+      const p = buildPingShare(getPingHistory(), new Date().getTimezoneOffset());
+      return { enabled: true, tz: p.tz, rows: p.rows };
+    },
+    useBundle: async (code, title) => {
+      const r = decodeShare(String(code || ''));
+      const b = r.ok && r.kind === 'bundle' ? cleanBundle(r.data) : null;
+      if (!b) return { ok: false, error: 'That setup bundle is not valid (it may be for a newer client).' };
+      const ex = getExtras();
+      const lines = describeBundle(b, ex.settingsProfiles.length >= 30);
+      const name = typeof title === 'string' && title.trim() ? title.trim().slice(0, 80) : (r.ok ? r.name : '') || 'Setup bundle';
+      const parent = BrowserWindow.getFocusedWindow() ?? (win.isDestroyed() ? undefined : win);
+      const opts = { type: 'question' as const, buttons: ['Apply', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Use setup bundle', message: `Use the setup bundle "${name}"?`, detail: `${lines.map((l) => '- ' + l).join('\n')}\n\nYou can undo it afterwards in Dashboard > Settings history.` };
+      const dlg = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+      if (dlg.response !== 0) return { ok: false, error: 'Cancelled.' };
+      const next = { ...ex };
+      if (b.crosshair) next.crosshair = { ...ex.crosshair, ...sanitizeCrosshair(b.crosshair), enabled: true };
+      if (b.profile && ex.settingsProfiles.length < 30) {
+        next.settingsProfiles = [...ex.settingsProfiles, { name: freeName(b.profile.name, new Set(ex.settingsProfiles.map((p) => p.name))), data: b.profile.data }];
+      }
+      const before = currentConfigValue('extras');
+      applySetConfig('extras', next);
+      noteSettingsChange('extras', before, currentConfigValue('extras'));
+      return { ok: true, message: `Applied "${name}". Reload the game (F5) to see the crosshair${b.profile ? '; load the profile under Settings > Settings Profiles' : ''}.` };
+    },
+    weeklyStats: () => {
+      const ex = getExtras();
+      // Only when the player switched sharing on (and the statistics are being kept); the website asks, the client decides
+      if (!ex.shareWeekly || !ex.sessionStats.enabled || safeMode) return { enabled: false, weeks: [] };
+      return { enabled: true, weeks: buildShare(allSessions() as ShareSession[], Date.now()) };
+    },
+    installScript: async (title, code, sourceUrl) => {
       // Works even when Userscripts are off: the file and its switch are written, and Userscripts are turned on
       // (they start at the next launch, because the engine loads when the client starts).
       const mgr = userscriptManager ?? new UserscriptManager(usDir);
@@ -3013,6 +3184,7 @@ async function launchApp(): Promise<void> {
         const tracker = await mgr.loadTracker(await mgr.scanScripts());
         tracker[file] = true;
         await mgr.saveTracker(tracker);
+        noteScriptOrigin(file, sourceUrl, title, code); // remembered, so a newer version on the website can be offered later
       } catch (err) { return { ok: false, error: (err as Error).message }; }
       if (!userscriptManager) {
         config.set('userscripts', { ...usConfig, enabled: true });
@@ -3063,9 +3235,21 @@ async function launchApp(): Promise<void> {
   });
 
   // ── Instant replay ──
-  ipcMain.handle('replay-save', async (e, ctx?: unknown) => {
+  ipcMain.handle('replay-save', async (e, ctx?: unknown, auto?: unknown) => {
     if (e.sender !== win.webContents || !gameActive || !getExtras().instantReplay.enabled) return false;
-    await saveReplayClip(cleanClipContext(ctx));
+    const clipCtx = cleanClipContext(ctx);
+    const saved = await saveReplayClip(clipCtx);
+    // A clip the client saved by itself (streak or many kills in a moment) can be posted to the player's own Discord webhook
+    const a = cleanAutoClip(auto);
+    const ex = getExtras();
+    if (saved && a && ex.instantReplay.sendToDiscord && ex.discordWebhook) {
+      void (async () => {
+        let data: Buffer | undefined;
+        try { if (saved.size <= MAX_UPLOAD) data = await fsp.readFile(saved.path); } catch { /* post the message only */ }
+        const r = await postToDiscord(ex.discordWebhook, clipMessage(a, clipCtx) + (data ? '' : ' (the clip is saved on my computer: it is too big to upload)'), data ? { name: saved.fileName, data, mime: saved.mime } : undefined);
+        if (!r.ok) electronLog.warn('[KRH-Discord] Clip not posted:', r.error);
+      })();
+    }
     return true;
   });
   // Clip gallery (Settings > Extras > Replay Clips): list, open, show in folder, rename, delete
@@ -3241,7 +3425,15 @@ async function launchApp(): Promise<void> {
       // Only the game socket (its host starts with lobby-, like the ping target), and not a clean close without a status code
       // (1005): that is what leaving a game or hopping to another server looks like. The script search below still sees every close.
       const leaving = r.clean === true && r.code === 1005;
-      if (typeof r.code === 'number' && r.game !== false && !leaving) recordDrop(r.code, typeof r.region === 'string' ? r.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '');
+      if (typeof r.code === 'number' && r.game !== false && !leaving) {
+        recordDrop(r.code, typeof r.region === 'string' ? r.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '');
+        // A script that was updated from the website a moment ago is the first suspect: in automatic mode it is taken back after two drops
+        const rb = noteDropForScripts(getExtras().scriptUpdates, scriptIO());
+        if (rb.rolledBack.length) {
+          electronLog.warn(`[KRH-ScriptUpdates] Took back ${rb.rolledBack.join(', ')} after connection drops`);
+          if (!win.isDestroyed()) win.webContents.send('toast', `The connection dropped after a script update: went back to the earlier version of ${rb.rolledBack.join(', ')}. Reload the game (F5).`);
+        }
+      }
     }
     const ev = cleanClose(raw, Date.now());
     if (!ev) return;
@@ -3291,6 +3483,10 @@ async function launchApp(): Promise<void> {
       const h = cleanHealth(raw);
       if (h) scriptHealth.set(h.filename, h);
     }
+    // Scripts that failed in this start: remembered, and if the game itself changed recently the player is told once
+    const failing = [...scriptHealth.values()].filter((h) => h.status === 'error').map((h) => h.filename);
+    rememberFailing(failing);
+    if (shouldToast(failing) && !win.isDestroyed()) win.webContents.send('krh-toast', `Krunker was updated and ${failing.length} userscript${failing.length === 1 ? '' : 's'} stopped working: see Dashboard > Userscripts.`);
   });
   ipcMain.handle('script-health-get', () => ({ live: gameActive && !win.isDestroyed(), list: [...scriptHealth.values()] }));
   ipcMain.on('builtin-script-error', (_e, filename: unknown, msg: unknown) => {
@@ -3376,6 +3572,8 @@ async function launchApp(): Promise<void> {
     clientSettings.ui = { ...(clientSettings.ui as Record<string, unknown>) };
     delete (clientSettings.ui as Record<string, unknown>).lastSeenVersion;
     delete (clientSettings.ui as Record<string, unknown>).skippedUpdateVersion;
+    // The Discord webhook address is a secret (anyone who has it can post to that channel): it never travels in a shared settings file
+    withoutSecrets(clientSettings);
 
     const payload = {
       app: 'KRH-Client',
@@ -3584,6 +3782,7 @@ async function launchApp(): Promise<void> {
     flushSettingsHistory();
     flushTrends();
     flushPlayLog();
+    flushPerfCoach();
     installOnQuitIfWanted();
     markCleanQuit();
     discordRpc?.disconnect();

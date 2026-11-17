@@ -3,7 +3,7 @@
 // (see site-bridge.ts), so the page can only do the fixed list of "use this post" actions.
 import { contextBridge, ipcRenderer } from 'electron';
 
-const ACTIONS = new Set(['info', 'use-css', 'use-script']);
+const ACTIONS = new Set(['info', 'use-css', 'use-script', 'weekly-stats', 'use-bundle', 'ping-stats']);
 
 contextBridge.exposeInMainWorld('krhClientBridge', {
   call: (action: string, payload?: unknown): Promise<unknown> => {

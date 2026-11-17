@@ -15,6 +15,7 @@ import { electronLog } from './logger';
 import { showWindow } from './hub-window';
 import { registerExtras, type ExtraDeps } from './dashboard-extras';
 import { acceptScript, forgetScript } from './script-changes';
+import { forgetScriptOrigin } from './script-updates';
 
 export interface DashboardDeps {
   version: string;
@@ -235,6 +236,7 @@ function registerIpc(deps: DashboardDeps): void {
     if (!mgr || !name) return false;
     try { rmSync(join(mgr.dir, name), { force: true }); } catch { return false; }
     forgetScript(name);
+    forgetScriptOrigin(name);
     await mgr.loadTracker(await mgr.scanScripts()); // prunes the deleted entry
     return true;
   });

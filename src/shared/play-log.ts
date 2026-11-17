@@ -24,19 +24,32 @@ export interface Round {
 
 export interface Bin { seconds: number; kills: number; deaths: number }
 
-export interface PlayLog { rounds: Round[]; bins: Bin[]; current: Round | null }
+/** The stretch of play in a row the samples belong to (a break of STRETCH_GAP_MS ends it); not saved. */
+export interface Stretch { start: number; last: number }
+
+export interface PlayLog { rounds: Round[]; bins: Bin[]; /** Time, kills and deaths by how long the stretch had lasted (see PHASE_LABELS). */ phases: Bin[]; current: Round | null; stretch: Stretch | null }
 
 /** Upper limits (ms) of the ping ranges: up to 40, 41-80, 81-120, 121-200, above 200. */
 export const BIN_LIMITS: readonly number[] = [40, 80, 120, 200];
 export const BIN_LABELS: readonly string[] = ['up to 40 ms', '41-80 ms', '81-120 ms', '121-200 ms', 'above 200 ms'];
-export const MAX_ROUNDS = 50;
+export const MAX_ROUNDS = 200;
+/** A break this long (menu, away from the game) ends a stretch of play. */
+export const STRETCH_GAP_MS = 15 * 60 * 1000;
+/** Upper limits (minutes into the stretch) of the phases: first 15 minutes, 15-45, 45-90, after 90. */
+export const PHASE_LIMITS: readonly number[] = [15, 45, 90];
+export const PHASE_LABELS: readonly string[] = ['first 15 min', '15-45 min', '45-90 min', 'after 90 min'];
 export const GAP_MS = 3 * 60 * 1000;
 export const MIN_ROUND_SECONDS = 60;
 /** Time in a range before its K/D is shown. */
 export const MIN_BIN_SECONDS = 10 * 60;
 
 export function emptyLog(): PlayLog {
-  return { rounds: [], bins: BIN_LABELS.map(() => ({ seconds: 0, kills: 0, deaths: 0 })), current: null };
+  return { rounds: [], bins: BIN_LABELS.map(() => ({ seconds: 0, kills: 0, deaths: 0 })), phases: PHASE_LABELS.map(() => ({ seconds: 0, kills: 0, deaths: 0 })), current: null, stretch: null };
+}
+
+export function phaseIndex(minutes: number): number {
+  const i = PHASE_LIMITS.findIndex((l) => minutes < l);
+  return i < 0 ? PHASE_LIMITS.length : i;
 }
 
 export function binIndex(ms: number): number {
@@ -68,6 +81,11 @@ export function addSample(log: PlayLog, s: Sample, now: number): void {
   if (!r.map && s.map) r.map = s.map;
   if (s.cls) r.cls = s.cls;
   r.endAt = now; r.seconds += dt; r.kills += kills; r.deaths += deaths;
+  // How long this stretch of play has lasted decides the phase (warm-up, settled in, tired)
+  if (!log.stretch || now - log.stretch.last > STRETCH_GAP_MS) log.stretch = { start: now, last: now };
+  log.stretch.last = now;
+  const ph = log.phases[phaseIndex((now - log.stretch.start) / 60000)];
+  ph.seconds += dt; ph.kills += kills; ph.deaths += deaths;
   if (Number.isFinite(s.ms) && s.ms > 0 && s.ms < 5000) {
     r.pingSum += s.ms; r.pingN += 1;
     const b = log.bins[binIndex(s.ms)];
@@ -118,6 +136,12 @@ export function cleanPlayLog(raw: unknown): PlayLog {
     for (let i = 0; i < out.bins.length; i++) {
       const b = r.bins[i] as Record<string, unknown> | undefined;
       if (b && typeof b === 'object') out.bins[i] = { seconds: num(b.seconds, 1e9), kills: num(b.kills, 1e7), deaths: num(b.deaths, 1e7) };
+    }
+  }
+  if (Array.isArray(r.phases)) {
+    for (let i = 0; i < out.phases.length; i++) {
+      const b = r.phases[i] as Record<string, unknown> | undefined;
+      if (b && typeof b === 'object') out.phases[i] = { seconds: num(b.seconds, 1e9), kills: num(b.kills, 1e7), deaths: num(b.deaths, 1e7) };
     }
   }
   if (Array.isArray(r.rounds)) {

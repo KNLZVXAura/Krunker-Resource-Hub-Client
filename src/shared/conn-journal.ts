@@ -5,10 +5,17 @@
 
 export type JKind = 'drop' | 'spike' | 'loss';
 
+/** What the last minute looked like before an event: the ten-second pings and the five-second FPS windows (oldest first). */
+export interface Trail { ping: number[]; fps: number[] }
+export const TRAIL_PING = 6;
+export const TRAIL_FPS = 12;
+
 export interface JEvent {
   at: number;
   kind: JKind;
   region: string;
+  /** The minute before the event (only for the first time of a stretch of the same event). */
+  trail?: Trail;
   /** drop: the close code. spike: the ping in ms. loss: how many answers in a row were missing. */
   value: number;
   /** spike: the usual ping at that moment (the median of the last samples). */
@@ -85,13 +92,14 @@ function push(j: Journal, e: JEvent, mergeMs: number): boolean {
 }
 
 /** A game connection that closed unexpectedly (a close code other than 1000 or 1001). */
-export function noteDrop(j: Journal, code: number, region: string, now: number): void {
+export function noteDrop(j: Journal, code: number, region: string, now: number, trail?: Trail): void {
   if (!Number.isFinite(code) || code === 1000 || code === 1001) return;
-  if (push(j, { at: now, kind: 'drop', region, value: Math.floor(code), base: 0 }, DROP_MERGE_MS)) dayOf(j, now).drops++;
+  if (push(j, { at: now, kind: 'drop', region, value: Math.floor(code), base: 0, ...(trail ? { trail } : {}) }, DROP_MERGE_MS)) dayOf(j, now).drops++;
 }
 
 /** One ping sample. `ms` <= 0 means the server did not answer. `dtSeconds` is the time since the last sample (for the minutes). */
-export function noteSample(j: Journal, det: Detector, ms: number, region: string, now: number, dtSeconds: number): void {
+export function noteSample(j: Journal, det: Detector, ms: number, region: string, now: number, dtSeconds: number, trail?: Trail): void {
+  const t = trail ? { trail } : {};
   const day = dayOf(j, now);
   // Another region has another usual ping, and the first sample after the menu (no time since the last one) starts a new
   // stretch of play: answers missing before it do not count together with the ones after it
@@ -99,8 +107,8 @@ export function noteSample(j: Journal, det: Detector, ms: number, region: string
   if (!(dtSeconds > 0)) { det.misses = 0; det.highs = []; }
   if (!(ms > 0 && ms < 5000)) {
     det.misses++;
-    if (det.misses === 2 && push(j, { at: now, kind: 'loss', region, value: 2, base: 0 }, MERGE_MS)) day.losses++;
-    else if (det.misses > 2) push(j, { at: now, kind: 'loss', region, value: det.misses, base: 0 }, MERGE_MS);
+    if (det.misses === 2 && push(j, { at: now, kind: 'loss', region, value: 2, base: 0, ...t }, MERGE_MS)) day.losses++;
+    else if (det.misses > 2) push(j, { at: now, kind: 'loss', region, value: det.misses, base: 0, ...t }, MERGE_MS);
     return;
   }
   det.misses = 0;
@@ -109,7 +117,7 @@ export function noteSample(j: Journal, det: Detector, ms: number, region: string
   if (det.recent.length >= MIN_BASELINE_SAMPLES) {
     const base = median(det.recent);
     if (ms >= SPIKE_MIN_MS && ms >= base * SPIKE_FACTOR && ms - base >= SPIKE_MIN_RISE) {
-      if (push(j, { at: now, kind: 'spike', region, value: Math.round(ms), base: Math.round(base) }, MERGE_MS)) day.spikes++;
+      if (push(j, { at: now, kind: 'spike', region, value: Math.round(ms), base: Math.round(base), ...t }, MERGE_MS)) day.spikes++;
       det.highs.push(ms);
       if (det.highs.length < HIGH_RUN_SAMPLES) return; // a spike does not become part of the usual ping...
       det.recent = det.highs.slice(-MIN_BASELINE_SAMPLES); // ...unless it stays: then this is the usual ping now
@@ -144,6 +152,37 @@ export function eventText(e: JEvent): string {
   return `no answer from the server ${e.value} times in a row${where}`;
 }
 
+const list = (a: readonly number[]): string => a.map((n) => Math.round(n)).join(', ');
+
+/** The minute before an event as one line, or '' when nothing was measured. */
+export function trailText(t: Trail | undefined): string {
+  if (!t || (!t.ping.length && !t.fps.length)) return '';
+  const parts: string[] = [];
+  if (t.ping.length) parts.push(`ping ${list(t.ping)} ms`);
+  if (t.fps.length) parts.push(`FPS ${list(t.fps)}`);
+  return `Before it: ${parts.join('; ')}`;
+}
+
+const mean = (a: readonly number[]): number => a.reduce((x, y) => x + y, 0) / a.length;
+
+/**
+ * Which side looks guilty: the PC (the FPS fell first while the ping was fine) or the network (the ping climbed first while the FPS
+ * was fine). Only said when the picture is clear; '' otherwise.
+ */
+export function diagnose(t: Trail | undefined): string {
+  if (!t || t.fps.length < 6 || t.ping.length < 3) return '';
+  const half = Math.floor(t.fps.length / 2);
+  const early = mean(t.fps.slice(0, half));
+  const late = mean(t.fps.slice(-3));
+  const fpsFell = early > 20 && late < early * 0.65;
+  const pingEarly = mean(t.ping.slice(0, Math.max(1, Math.floor(t.ping.length / 2))));
+  const pingLate = Math.max(...t.ping.slice(-2));
+  const pingRose = pingLate >= Math.max(120, pingEarly * 2);
+  if (fpsFell && !pingRose) return `The FPS fell first (about ${Math.round(early)} to ${Math.round(late)}) while the ping stayed fine: the PC may be the cause (heat, background program, a script) and not the network.`;
+  if (pingRose && !fpsFell) return `The ping climbed first (about ${Math.round(pingEarly)} to ${Math.round(pingLate)} ms) while the FPS stayed steady: this points to the network or the server.`;
+  return '';
+}
+
 /** Plain text for a message to a provider or a game server admin. */
 export function exportText(j: Journal, now: number, days = 14, maxEvents = 40): string {
   const from = daysBefore(now, days);
@@ -160,9 +199,21 @@ export function exportText(j: Journal, now: number, days = 14, maxEvents = 40): 
     '',
   ];
   if (!events.length) lines.push('No events in this period.');
-  for (const e of events.slice().reverse().slice(0, maxEvents)) lines.push(`${stamp(e.at)}  ${eventText(e)}`);
+  for (const e of events.slice().reverse().slice(0, maxEvents)) {
+    lines.push(`${stamp(e.at)}  ${eventText(e)}`);
+    const tt = trailText(e.trail);
+    if (tt) lines.push(`    ${tt}`);
+  }
   if (events.length > maxEvents) lines.push(`... and ${events.length - maxEvents} older events.`);
   return lines.join('\n');
+}
+
+function cleanTrail(raw: unknown): { trail?: Trail } {
+  if (!raw || typeof raw !== 'object') return {};
+  const r = raw as Record<string, unknown>;
+  const nums = (v: unknown, max: number): number[] => (Array.isArray(v) ? v.slice(-max).filter((x): x is number => typeof x === 'number' && Number.isFinite(x)).map((x) => Math.max(0, Math.min(100000, Math.round(x)))) : []);
+  const trail = { ping: nums(r.ping, TRAIL_PING), fps: nums(r.fps, TRAIL_FPS) };
+  return trail.ping.length || trail.fps.length ? { trail } : {};
 }
 
 /** Keeps what was read from disk to the known shape. */
@@ -175,7 +226,7 @@ export function cleanJournal(raw: unknown): Journal {
     for (const item of r.events.slice(-MAX_EVENTS)) {
       const e = item as Record<string, unknown> | null;
       if (!e || typeof e !== 'object' || (e.kind !== 'drop' && e.kind !== 'spike' && e.kind !== 'loss')) continue;
-      out.events.push({ at: num(e.at, 1e14), kind: e.kind, region: typeof e.region === 'string' ? e.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '', value: num(e.value, 1e6), base: num(e.base, 1e6) });
+      out.events.push({ at: num(e.at, 1e14), kind: e.kind, region: typeof e.region === 'string' ? e.region.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase() : '', value: num(e.value, 1e6), base: num(e.base, 1e6), ...cleanTrail(e.trail) });
     }
   }
   if (r.days && typeof r.days === 'object') {

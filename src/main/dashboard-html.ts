@@ -229,6 +229,11 @@ const BODY = `
     <div class="edrow"><input type="text" id="seName" placeholder="Script name" maxlength="80"><label><input type="checkbox" id="seReload" checked> Reload the open game after saving</label></div>
     <textarea class="code" id="seCode" spellcheck="false" placeholder="// ==UserScript==&#10;// @name        My script&#10;// @author      Me&#10;// ==/UserScript==&#10;&#10;console.log('Hello from KRH Client');"></textarea>
     <div class="row"><button class="btn" id="seSave">Save and switch on</button><button class="btn ghost" id="seNew">New script</button></div></div>
+   <div class="card" id="gwCard" hidden><h2>Krunker was updated</h2><p id="gwText"></p><div class="list" id="gwList"></div>
+    <div class="row"><button class="btn" id="gwCheck">Check for newer versions</button><button class="btn ghost" id="gwOff">Switch them off</button><button class="btn ghost" id="gwDismiss">Dismiss</button></div></div>
+   <div class="card" id="suCard"><h2>Updates from the KRH website</h2><p id="suInfo">Scripts you add with &quot;Use in KRH Client&quot; on the website are checked for newer versions. An update never replaces a script you edited without asking.</p>
+    <div class="row"><select id="suMode"><option value="ask">Ask me</option><option value="auto">Update by itself (safe ones)</option><option value="off">Off</option></select><button class="btn" id="suCheck">Check now</button></div>
+    <div class="list" id="suList"></div><div id="suLog" style="margin-top:8px"></div></div>
    <div class="card"><h2>Your scripts</h2><div class="row"><button class="btn ghost" id="sAdd">+ Add .js file</button><button class="btn ghost" id="sFolder">Open folder</button></div><div class="list" id="sList"></div></div>
   </section>
   <section id="p-css" hidden>
@@ -257,11 +262,17 @@ const BODY = `
   <section id="p-servers" hidden>
    <h1>Servers</h1><p class="sub">Your ping to every Krunker region. Star the ones you want and let the matchmaker use only those.</p>
    <div class="card"><div class="row"><button class="btn" id="svRefresh">Measure again</button><button class="btn ghost" id="svUse">Use my starred regions in the matchmaker</button><button class="btn ghost" id="svAll">Matchmaker: all regions</button></div>
+    <div id="svBest" class="note" style="margin:10px 0" hidden><span id="svBestText"></span> <button class="btn" id="svBestUse" style="margin-left:6px">Use the best regions</button></div>
     <p id="svNote" style="margin:10px 0"></p><table><thead><tr><th></th><th>Region</th><th>Ping</th></tr></thead><tbody id="svBody"></tbody></table></div>
   </section>
   <section id="p-history" hidden>
    <h1>History</h1><p class="sub">Your recent sessions, saved on this PC.</p>
    <div class="card"><h2>All time</h2><div class="stat" id="hiTotal"></div></div>
+   <div class="card"><h2>Warm-up and tiredness</h2><p id="wuText">Loading...</p><table id="wuTable" hidden><thead><tr><th>Time into a session</th><th>Played</th><th>Kills / Deaths</th><th>K/D</th></tr></thead><tbody id="wuBody"></tbody></table></div>
+   <div class="card"><h2>Did that change help?</h2><p>After you change your crosshair, sensitivity / FOV presets, auto profile rules or key binds this compares your K/D before and since. K/D moves around a lot by luck, so a small difference over a few matches is called unclear, not better.</p><div class="list" id="imList"></div></div>
+   <div class="card"><h2>Weekly card</h2><p>A picture of your week to share. It is made on this PC from your saved statistics and goes nowhere unless you press a button.</p>
+    <div class="row"><select id="wcWhich"><option value="last">Last week</option><option value="this">This week so far</option></select><button class="btn" id="wcSave">Save PNG</button><button class="btn ghost" id="wcCopy">Copy image</button><button class="btn ghost" id="wcDiscord">Send to Discord</button></div>
+    <p id="wcNote" style="margin:8px 0"></p><canvas id="wcCanvas" width="1200" height="630" style="width:100%;max-width:640px;border-radius:12px;border:1px solid var(--line)"></canvas></div>
    <div class="card"><h2>Sessions</h2><table><thead><tr><th>Date</th><th>Kills / Deaths</th><th>K/D</th><th>Time</th><th>Matches</th><th>Best streak</th><th>Most played</th></tr></thead><tbody id="hiBody"></tbody></table><div class="empty" id="hiEmpty" hidden>No sessions yet. Play a match and it will show up here.</div></div>
   </section>
   <section id="p-profiles" hidden>
@@ -281,6 +292,10 @@ const BODY = `
   <section id="p-diag" hidden>
    <h1>Diagnostics</h1><p class="sub">Everything useful for a bug report in one paste: versions, your PC, the settings that matter for performance and the end of the log. E-mail addresses and tokens are hidden.</p>
    <div class="card"><h2>Performance doctor</h2><p>Low FPS or lag? One click checks the Electron build, your FPS and GPU settings, display scaling and which processes use CPU. Run it while the game is open for the real picture.</p><div class="row"><button class="btn" id="drRun">Run check</button><button class="btn ghost" id="drCopy" hidden>Copy report</button></div><p class="drsum" id="drSum"></p><div id="drList"></div></div>
+   <div class="card" id="pcCard"><h2>Performance coach</h2><p>Suggests settings that cost FPS, tries one at a time and measures in your real matches whether it helped. It uses the FPS statistics (Settings &gt; Extras), so play a match or two first.</p>
+    <p id="pcStat"></p><div class="list" id="pcList"></div>
+    <div id="pcExp" hidden><p id="pcExpText"></p><div class="row"><button class="btn" id="pcKeep">Keep it</button><button class="btn ghost" id="pcUndo">Put it back</button></div></div>
+    <div id="pcHist" style="margin-top:10px"></div></div>
    <div class="card"><div class="row"><button class="btn" id="dgCopy">Copy report</button><button class="btn ghost" id="dgRefresh">Refresh</button><button class="btn ghost" id="dgLogs">Open logs folder</button></div><pre class="diag" id="dgText">Loading...</pre></div>
   </section>
   <section id="p-logs" hidden>
@@ -342,9 +357,9 @@ function show(p) {
   document.querySelectorAll('main section').forEach((s) => { s.hidden = s.id !== 'p-' + p; if (!s.hidden) stagger(s); });
   document.querySelectorAll('.grid .tile, .tgrid .theme-tile').forEach((t, i) => t.style.setProperty('--i', String(i)));
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === p));
-  if (p === 'scripts') loadScripts(); if (p === 'css') loadCss(); if (p === 'themes') { loadThemes(); loadBg(); } if (p === 'look') loadCache();
-  if (p === 'home') loadGames(); if (p === 'servers') loadServers(false); if (p === 'history') loadHistory();
-  if (p === 'profiles') loadProfiles(); if (p === 'keybinds') loadKeybinds(); if (p === 'diag') loadDiag(); if (p === 'logs') loadLogs(); if (p === 'news') loadNews(false); if (p === 'home') loadGuard(); if (p === 'updates') loadUpdates();
+  if (p === 'scripts') { loadScripts(); loadScriptUpdates(); loadGameWatch(); } if (p === 'css') loadCss(); if (p === 'themes') { loadThemes(); loadBg(); } if (p === 'look') loadCache();
+  if (p === 'home') loadGames(); if (p === 'servers') loadServers(false); if (p === 'history') { loadHistory(); loadInsight(); loadImpact(); loadCard(); }
+  if (p === 'profiles') loadProfiles(); if (p === 'keybinds') loadKeybinds(); if (p === 'diag') { loadDiag(); loadCoach(); } if (p === 'logs') loadLogs(); if (p === 'news') loadNews(false); if (p === 'home') loadGuard(); if (p === 'updates') loadUpdates();
   if (p === 'settings') document.dispatchEvent(new Event('krh-dash-settings'));
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.p)));
@@ -587,11 +602,133 @@ async function loadServers(force) {
     const c0 = document.createElement('td'); c0.append(s); const c1 = el('td', '', (REGIONS[row.code] || row.code) + ' (' + row.code + ')');
     const c2 = el('td', row.ms < 60 ? 'ping-good' : row.ms < 120 ? 'ping-mid' : 'ping-bad', row.ms + ' ms'); tr.append(c0, c1, c2); body.append(tr);
   });
+  const sameAsBest = r.best.codes.length > 0 && r.best.codes.length === r.matchmakerRegions.length;
+  $('svBest').hidden = !r.best.codes.length || sameAsBest; $('svBestText').textContent = r.best.text;
   $('svNote').textContent = r.matchmakerRegions.length ? 'The matchmaker only looks in ' + r.matchmakerRegions.length + ' region(s) you chose.' : 'The matchmaker looks in all regions.';
 }
 $('svRefresh').onclick = () => loadServers(true);
+$('svBestUse').onclick = async () => { const r = await call('server-use-best'); toast(r.codes.length ? 'The matchmaker now searches in: ' + r.codes.join(', ') : 'No ping results yet'); loadServers(false); };
 $('svUse').onclick = async () => { const r = await call('server-use-favs', false); toast(r.regions.length ? 'The matchmaker now uses your starred regions' : 'Star at least one region first'); loadServers(false); };
 $('svAll').onclick = async () => { await call('server-use-favs', true); toast('The matchmaker uses all regions again'); loadServers(false); };
+
+
+// ── Performance coach ──
+async function loadCoach() {
+  const r = await call('coach');
+  $('pcStat').textContent = !r.fpsOn ? 'FPS statistics are off, so nothing can be measured. Switch them on in Client Settings > Extras > FPS statistics.'
+    : r.enough ? 'Last half hour: about ' + Math.round(r.recent.avg) + ' FPS on average, 1% low about ' + Math.round(r.recent.low) + ' FPS (' + r.recent.windows + ' measurements).'
+    : 'Not enough measurements yet (' + r.recent.windows + '): play a match with FPS statistics on, then come back.';
+  const list = $('pcList'); list.replaceChildren();
+  $('pcExp').hidden = !r.experiment;
+  if (r.experiment) {
+    const e = r.experiment;
+    $('pcExpText').textContent = e.result ? 'Test of "' + e.title + '": ' + e.result.text
+      : 'Testing "' + e.title + '": measuring ' + e.windows + ' of ' + e.needed + '. Keep playing; the result shows up here by itself.';
+    $('pcKeep').textContent = e.result ? 'Keep it' : 'Keep it anyway';
+  } else if (!r.suggestions.length) {
+    list.append(el('div', 'empty', 'Nothing to suggest: the settings that cost FPS are already off or not in use.'));
+  } else {
+    r.suggestions.forEach((s) => {
+      const row = el('div', 'item'); const nm = el('span', 'nm', s.title + (s.level === 'fix' ? ' (recommended)' : '')); nm.title = s.why;
+      const why = el('span', '', s.why); why.style.cssText = 'color:var(--dim);font-size:12px;flex:1;margin-left:10px';
+      const go = el('button', 'btn', 'Try it'); go.onclick = async () => { const x = await call('coach-apply', s.id); toast(x.error || 'Changed. Play a few minutes and the result appears here.'); loadCoach(); };
+      row.append(nm, why, go); list.append(row);
+    });
+  }
+  const h = $('pcHist'); h.replaceChildren();
+  if (r.history.length) { h.append(el('div', '', 'Earlier tests')); r.history.slice(0, 5).forEach((x) => { const d = el('div', '', new Date(x.at).toLocaleDateString() + ' - ' + x.title + ': ' + (x.kept ? 'kept. ' : 'put back. ') + x.text); d.style.cssText = 'color:var(--dim);font-size:12px;margin-top:4px'; h.append(d); }); }
+}
+$('pcKeep').onclick = async () => { await call('coach-keep'); toast('Kept'); loadCoach(); };
+$('pcUndo').onclick = async () => { await call('coach-undo'); toast('Put back how it was'); loadCoach(); };
+
+
+// ── Krunker updated ──
+let gwScripts = [];
+async function loadGameWatch() {
+  const r = await call('gamewatch'); $('gwCard').hidden = !r.banner; if (!r.banner) return;
+  gwScripts = r.banner.scripts;
+  $('gwText').textContent = 'The game files changed on ' + new Date(r.banner.changedAt).toLocaleDateString() + ', and ' + r.banner.scripts.length + ' script' + (r.banner.scripts.length === 1 ? '' : 's') + (r.banner.scripts.length === 1 ? ' that worked before has' : ' that worked before have') + ' failed since. After a Krunker update the author usually has to update the script.';
+  const l = $('gwList'); l.replaceChildren();
+  r.banner.scripts.forEach((s) => { const row = el('div', 'item'); row.append(el('span', 'nm', s.name)); const d = el('span', '', s.detail); d.style.cssText = 'color:var(--dim);font-size:12px;flex:1;margin-left:10px'; row.append(d); l.append(row); });
+}
+$('gwCheck').onclick = async () => { const x = await call('script-updates-check'); toast(x.text); loadScriptUpdates(); loadGameWatch(); };
+$('gwOff').onclick = async () => { const r = await call('scripts-list'); const on = new Set((r.files || []).filter((f) => f.enabled).map((f) => f.name)); let n = 0; for (const s of gwScripts) { if (on.has(s.filename)) { await call('scripts-toggle', s.filename); n++; } } toast(n ? 'Switched off ' + n + ' script' + (n === 1 ? '' : 's') + '. Reload the game (F5).' : 'They are already off'); loadScripts(); };
+$('gwDismiss').onclick = async () => { await call('gamewatch-dismiss'); loadGameWatch(); };
+
+// ── Userscript updates from the KRH website ──
+async function loadScriptUpdates() {
+  const r = await call('script-updates'); $('suMode').value = r.mode;
+  const list = $('suList'); list.replaceChildren();
+  $('suInfo').textContent = r.tracked.length
+    ? r.tracked.length + ' script(s) from the KRH website are tracked' + (r.lastCheckAt ? '; last check ' + new Date(r.lastCheckAt).toLocaleString() + '.' : '.')
+    : 'Scripts you add with "Use in KRH Client" on the website are checked for newer versions here. An update never replaces a script you edited without asking.';
+  r.pending.forEach((p) => {
+    const row = el('div', 'item'); const nm = el('span', 'nm', p.title + ' - new version (+' + p.added + ' / -' + p.removed + ' lines)');
+    const why = el('span', '', (p.verdict === 'edited' ? 'You edited this script: updating replaces your changes. ' : '') + (p.risks.length ? 'New in it: ' + p.risks.join(', ') + '. ' : '') + (p.sample.length ? 'e.g. ' + p.sample[0] : '')); why.style.cssText = 'color:var(--dim);font-size:12px;flex:1;margin-left:10px';
+    const up = el('button', 'btn', 'Update'); up.onclick = async () => { const x = await call('script-update-apply', p.file); toast(x.error || 'Updated'); loadScriptUpdates(); };
+    const sk = el('button', 'btn ghost', 'Skip'); sk.onclick = async () => { await call('script-update-skip', p.file); loadScriptUpdates(); };
+    row.append(nm, why, up, sk); list.append(row);
+  });
+  r.tracked.filter((t) => t.canUndo).forEach((t) => {
+    const row = el('div', 'item'); const nm = el('span', 'nm', t.title + ' - updated ' + new Date(t.updatedAt).toLocaleString() + (t.suspect ? ' (the connection dropped since)' : ''));
+    const un = el('button', 'btn ghost', 'Go back to the earlier version'); un.onclick = async () => { const x = await call('script-update-undo', t.file); toast(x.error || 'Went back'); loadScriptUpdates(); };
+    row.append(nm, un); list.append(row);
+  });
+  const lg = $('suLog'); lg.replaceChildren();
+  r.log.slice(0, 5).forEach((x) => { const d = el('div', '', new Date(x.at).toLocaleString() + ' - ' + x.text); d.style.cssText = 'color:var(--dim);font-size:12px;margin-top:3px'; lg.append(d); });
+}
+$('suMode').onchange = async () => { await call('script-updates-mode', $('suMode').value); toast('Saved'); };
+$('suCheck').onclick = async () => { $('suCheck').disabled = true; const x = await call('script-updates-check'); toast(x.text); $('suCheck').disabled = false; loadScriptUpdates(); };
+
+// ── Warm-up insight and the weekly card ──
+async function loadImpact() {
+  const r = await call('impact'); const l = $('imList'); l.replaceChildren();
+  if (!r.length) { l.append(el('div', 'empty', 'Nothing to compare yet. When you change one of the settings above and play for a few days, the result shows up here.')); return; }
+  r.forEach((x) => { const row = el('div', 'item'); row.append(el('span', 'nm', new Date(x.at).toLocaleDateString() + ' - ' + x.label + (x.verdict === 'better' ? ' (looks better)' : x.verdict === 'worse' ? ' (looks worse)' : '')));
+    const t = el('span', '', x.text); t.style.cssText = 'color:var(--dim);font-size:12px;flex:1;margin-left:10px'; row.append(t); l.append(row); });
+}
+async function loadInsight() {
+  const r = await call('insight'); $('wuText').textContent = r.text;
+  const b = $('wuBody'); b.replaceChildren(); $('wuTable').hidden = !r.rows.some((x) => x.minutes > 0);
+  r.rows.forEach((x) => { const tr = document.createElement('tr'); [x.label, x.minutes + ' min', x.kills + ' / ' + x.deaths, x.enough ? x.kd.toFixed(2) : '-'].forEach((t) => tr.append(el('td', '', t))); b.append(tr); });
+}
+function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+let wcCard = null;
+function drawCard(c) {
+  const cv = $('wcCanvas'); const ctx = cv.getContext('2d'); const W = 1200, H = 630;
+  const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0d1424'); g.addColorStop(1, '#1b1038'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W - 140, 90, 10, W - 140, 90, 420); glow.addColorStop(0, 'rgba(53,214,255,.22)'); glow.addColorStop(1, 'rgba(53,214,255,0)'); ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  const F = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+  ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#ffffff'; ctx.font = '700 46px ' + F; ctx.fillText(c.title, 60, 90);
+  ctx.fillStyle = '#9fb3d6'; ctx.font = '400 26px ' + F; ctx.fillText(c.range, 60, 130);
+  // big K/D
+  ctx.fillStyle = '#35d6ff'; ctx.font = '800 150px ' + F; ctx.fillText(c.kd, 56, 300);
+  ctx.fillStyle = '#9fb3d6'; ctx.font = '600 26px ' + F; ctx.fillText('K/D' + (c.kdNote ? '   ' + c.kdNote : ''), 60, 340);
+  // stat tiles
+  const tiles = [['Time played', c.time], ['Sessions', String(c.sessions)], ['Kills', String(c.kills)], ['Deaths', String(c.deaths)]];
+  tiles.forEach((t, i) => { const x = 640 + (i % 2) * 260, y = 170 + Math.floor(i / 2) * 120; rr(ctx, x, y, 240, 100, 16); ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.font = '700 38px ' + F; ctx.fillText(t[1], x + 20, y + 52); ctx.fillStyle = '#9fb3d6'; ctx.font = '400 22px ' + F; ctx.fillText(t[0], x + 20, y + 84); });
+  // days
+  const max = Math.max(30, ...c.days.map((d) => d.minutes)); const bx = 60, bw = 70, gap = 18, base = 540, bh = 120;
+  c.days.forEach((d, i) => { const x = bx + i * (bw + gap); const h = Math.max(6, Math.round(d.minutes / max * bh));
+    rr(ctx, x, base - h, bw, h, 10); ctx.fillStyle = d.active ? '#35d6ff' : 'rgba(255,255,255,.18)'; ctx.fill();
+    ctx.fillStyle = '#9fb3d6'; ctx.font = '400 20px ' + F; ctx.textAlign = 'center'; ctx.fillText(d.label, x + bw / 2, base + 28); ctx.textAlign = 'left'; });
+  ctx.fillStyle = '#ffffff'; ctx.font = '600 24px ' + F;
+  const bits = [c.activeDays + ' day' + (c.activeDays === 1 ? '' : 's') + ' played']; if (c.streak > 1) bits.push(c.streak + ' in a row'); if (c.mapName) bits.push('most played: ' + c.mapName + (c.mapKd ? ' (K/D ' + c.mapKd + ')' : ''));
+  ctx.fillText(bits.join('   -   '), 640, 440);
+  ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.font = '400 20px ' + F; ctx.fillText('KRH Client  -  Krunker Resource Hub', 640, 560);
+}
+async function loadCard() {
+  const r = await call('weekly-card', $('wcWhich').value); wcCard = r.card; const cv = $('wcCanvas');
+  $('wcNote').textContent = r.card ? '' : 'Not enough play in this week yet (at least 5 minutes and a saved session).';
+  ['wcSave', 'wcCopy', 'wcDiscord'].forEach((id) => { $(id).disabled = !r.card; });
+  if (r.card) drawCard(r.card); else cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+}
+$('wcWhich').onchange = loadCard;
+const cardPng = () => $('wcCanvas').toDataURL('image/png');
+$('wcSave').onclick = async () => { const x = await call('weekly-card-save', cardPng()); toast(x.error || 'Saved to Pictures / KRH Client'); };
+$('wcCopy').onclick = async () => { const x = await call('weekly-card-copy', cardPng()); toast(x.error || 'Image copied: paste it anywhere'); };
+$('wcDiscord').onclick = async () => { const x = await call('weekly-card-discord', cardPng(), wcCard ? wcCard.title + ': K/D ' + wcCard.kd + ', ' + wcCard.time : ''); toast(x.error || 'Sent to Discord'); };
 
 async function loadHistory() {
   const r = await call('history'); const t = $('hiTotal'); t.replaceChildren();

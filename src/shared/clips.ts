@@ -94,3 +94,35 @@ export function cleanClipList(raw: unknown): ClipMeta[] {
 export function sizeText(bytes: number): string {
   return bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(bytes / 1024)) + ' KB';
 }
+
+// ── Automatic clips ──
+
+/** Kill times within the last `windowSec` seconds, `now` included (older ones fall away). */
+export function killsInWindow(times: readonly number[], now: number, windowSec: number): number[] {
+  const from = now - Math.max(1, windowSec) * 1000;
+  return [...times.filter((t) => t > from && t <= now), now];
+}
+
+/** A clip is saved by itself when enough kills happened in the window, and not again for a while (the window and 20 seconds). */
+export function shouldAutoClip(count: number, threshold: number, now: number, lastAt: number, windowSec: number): boolean {
+  return threshold >= 2 && count >= threshold && now - lastAt >= (Math.max(1, windowSec) + 20) * 1000;
+}
+
+export type AutoKind = 'streak' | 'multi';
+export interface AutoClip { kind: AutoKind; count: number; seconds: number }
+
+/** The auto-clip details the game page sends along with a save, in a known shape (anything else is ignored). */
+export function cleanAutoClip(raw: unknown): AutoClip | null {
+  const r = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null;
+  if (!r || (r.kind !== 'streak' && r.kind !== 'multi')) return null;
+  const n = (v: unknown, lo: number, hi: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.floor(v))) : lo);
+  return { kind: r.kind, count: n(r.count, 2, 999), seconds: n(r.seconds, 0, 120) };
+}
+
+/** What is posted to Discord with an automatic clip: "5 kills in 8 s as Hunter on Sandstorm". */
+export function clipMessage(a: AutoClip, ctx: Pick<ClipContext, 'map' | 'cls'>): string {
+  const what = a.kind === 'multi' && a.seconds > 0 ? `${a.count} kills in ${a.seconds} s` : `${a.count} kill streak`;
+  const as = ctx.cls ? ` as ${ctx.cls}` : '';
+  const on = ctx.map ? ` on ${ctx.map}` : '';
+  return `${what}${as}${on}`;
+}

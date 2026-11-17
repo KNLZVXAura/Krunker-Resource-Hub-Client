@@ -15,6 +15,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import type { UserCssManager } from './user-css';
 import { electronLog } from './logger';
+import type { ShareWeek } from '../shared/weekly-share';
 
 /** Where the website keeps uploaded files (Supabase Storage, public bucket URLs) and the site itself. */
 const ASSET_PREFIXES = [
@@ -27,7 +28,7 @@ const MAX_TEXT = 2 * 1024 * 1024;
 /** Post categories that may be switched on from the website. Cheat scripts ("scripts-userscript-hack") are NOT here. */
 const SCRIPT_CATEGORIES = new Set(['scripts-userscript-legal']);
 
-export const BRIDGE_ACTIONS = ['info', 'use-css', 'use-script'] as const;
+export const BRIDGE_ACTIONS = ['info', 'use-css', 'use-script', 'weekly-stats', 'use-bundle', 'ping-stats'] as const;
 type BridgeAction = typeof BRIDGE_ACTIONS[number];
 
 export interface BridgeResult { ok: boolean; message?: string; error?: string; [k: string]: unknown }
@@ -37,8 +38,14 @@ export interface BridgeDeps {
   hub: () => BrowserWindow | null;
   userCss: UserCssManager;
   applyUserCss: () => void;
+  /** Typical ping per region and hour of day for the community ping; `enabled` is false unless the player switched sharing on. */
+  pingStats: () => { enabled: boolean; tz: number; rows: Array<{ region: string; hour: number; ms: number; samples: number }> };
+  /** A setup bundle (share code of kind bundle) from the website: asks the player, then applies it. */
+  useBundle: (code: unknown, title: unknown) => Promise<BridgeResult>;
+  /** The weekly totals for the leaderboard; `enabled` is false unless the player switched sharing on. */
+  weeklyStats: () => { enabled: boolean; weeks: ShareWeek[] };
   /** Put a userscript in the scripts folder and switch it on (turns Userscripts on if they were off). */
-  installScript: (title: string, code: string) => Promise<{ ok: boolean; message?: string; error?: string }>;
+  installScript: (title: string, code: string, sourceUrl: string) => Promise<{ ok: boolean; message?: string; error?: string }>;
 }
 
 function assetAllowed(raw: unknown): URL | null {
@@ -81,6 +88,13 @@ function asText(buf: Buffer): string {
   return buf.toString('utf-8');
 }
 
+/** A text file from the KRH website (the same addresses the bridge trusts), for the userscript update check. Throws when it cannot be had. */
+export async function fetchSiteText(raw: string, maxBytes: number = MAX_TEXT): Promise<string> {
+  const url = assetAllowed(raw);
+  if (!url) throw new Error('That file does not come from the KRH website');
+  return asText(await fetchBytes(url, maxBytes));
+}
+
 export function registerSiteBridge(deps: BridgeDeps): void {
   const mine = (e: Electron.IpcMainInvokeEvent): boolean => {
     const hub = deps.hub();
@@ -104,6 +118,19 @@ export function registerSiteBridge(deps: BridgeDeps): void {
 
   async function run(action: BridgeAction, p: Record<string, unknown>): Promise<BridgeResult> {
     if (action === 'info') return { ok: true, version: deps.version, actions: [...BRIDGE_ACTIONS] };
+    if (action === 'ping-stats') {
+      const r = deps.pingStats();
+      return r.enabled ? { ok: true, tz: r.tz, rows: r.rows } : { ok: false, off: true, error: 'Sharing ping is switched off in KRH Client.' };
+    }
+    if (action === 'use-bundle') {
+      if (typeof p.code !== 'string' || p.code.length > 3_000_000) return { ok: false, error: 'No bundle given.' };
+      return deps.useBundle(p.code, p.title);
+    }
+    if (action === 'weekly-stats') {
+      // Only the numbers the player agreed to share; the website sends them with the member's own login (the client never holds one)
+      const r = deps.weeklyStats();
+      return r.enabled ? { ok: true, weeks: r.weeks } : { ok: false, off: true, error: 'Sharing is switched off in KRH Client.' };
+    }
 
     const url = assetAllowed(p.url);
     if (!url) return { ok: false, error: 'That file does not come from the KRH website' };
@@ -119,7 +146,7 @@ export function registerSiteBridge(deps: BridgeDeps): void {
       }
       case 'use-script': {
         if (typeof p.category !== 'string' || !SCRIPT_CATEGORIES.has(p.category)) return { ok: false, error: 'Only legal userscripts can be switched on from the website' };
-        return deps.installScript(title, asText(await fetchBytes(url, MAX_TEXT)));
+        return deps.installScript(title, asText(await fetchBytes(url, MAX_TEXT)), url.href);
       }
       default: return { ok: false, error: 'Unknown action' };
     }

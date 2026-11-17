@@ -69,6 +69,8 @@ export function isSafeRelative(rel: string): boolean {
   if (parts.length > MAX_DEPTH) return false;
   for (const p of parts) {
     if (!SEGMENT.test(p) || p === '.' || p === '..' || p.startsWith('.')) return false;
+    // Windows treats CON, PRN, AUX, NUL, COM1-9 and LPT1-9 as devices even with an extension, and drops trailing dots and spaces
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(p.split('.')[0].trim()) || /[. ]$/.test(p)) return false;
   }
   return EXTENSIONS.has(extOf(parts[parts.length - 1]));
 }
@@ -137,7 +139,8 @@ export function listAutoBackups(dir: string): AutoBackupInfo[] {
     if (!m) continue;
     let size: number;
     try { size = statSync(join(dir, file)).size; } catch { continue; }
-    const at = new Date(+m[3], +m[4] - 1, +m[5], +m[6], +m[7], +m[8]).getTime();
+    // The stamp in the name is UTC (it is made with toISOString), so it is read as UTC; reading it as local time showed every backup hours off
+    const at = Date.UTC(+m[3], +m[4] - 1, +m[5], +m[6], +m[7], +m[8]);
     out.push({ file, kind: m[1] as AutoBackupKind, version: m[2], at: Number.isFinite(at) ? at : 0, size });
   }
   return out.sort((a, b) => b.at - a.at);
